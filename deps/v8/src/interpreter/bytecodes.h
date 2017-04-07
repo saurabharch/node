@@ -214,7 +214,7 @@ namespace interpreter {
                                                                                \
   /* Cast operators */                                                         \
   V(ToName, AccumulatorUse::kRead, OperandType::kRegOut)                       \
-  V(ToNumber, AccumulatorUse::kRead, OperandType::kRegOut)                     \
+  V(ToNumber, AccumulatorUse::kRead, OperandType::kRegOut, OperandType::kIdx)  \
   V(ToObject, AccumulatorUse::kRead, OperandType::kRegOut)                     \
                                                                                \
   /* Literals */                                                               \
@@ -616,11 +616,6 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   // Returns true if the bytecode is Ldar or Star.
   static constexpr bool IsLdarOrStar(Bytecode bytecode) {
     return bytecode == Bytecode::kLdar || bytecode == Bytecode::kStar;
-  }
-
-  // Returns true if |bytecode| puts a name in the accumulator.
-  static constexpr bool PutsNameInAccumulator(Bytecode bytecode) {
-    return bytecode == Bytecode::kTypeOf;
   }
 
   // Returns true if the bytecode is a call or a constructor call.

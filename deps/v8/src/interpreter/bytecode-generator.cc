@@ -1555,13 +1555,7 @@ void BytecodeGenerator::VisitClassLiteralProperties(ClassLiteral* expr,
       old_receiver = new_receiver;
     }
 
-    if (property->key()->IsStringLiteral()) {
-      VisitForRegisterValue(property->key(), key);
-    } else {
-      VisitForAccumulatorValue(property->key());
-      builder()->ConvertAccumulatorToName(key);
-    }
-
+    BuildLoadPropertyKey(property, key);
     if (property->is_static() && property->is_computed_name()) {
       // The static prototype property is read only. We handle the non computed
       // property name case in the parser. Since this is the only case where we
@@ -1825,9 +1819,7 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
       case ObjectLiteral::Property::COMPUTED:
       case ObjectLiteral::Property::MATERIALIZED_LITERAL: {
         Register key = register_allocator()->NewRegister();
-        VisitForAccumulatorValue(property->key());
-        builder()->ConvertAccumulatorToName(key);
-
+        BuildLoadPropertyKey(property, key);
         Register value = VisitForRegisterValue(property->value());
         VisitSetHomeObject(value, literal, property);
 
@@ -1850,8 +1842,7 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
       case ObjectLiteral::Property::SETTER: {
         RegisterList args = register_allocator()->NewRegisterList(4);
         builder()->MoveRegister(literal, args[0]);
-        VisitForAccumulatorValue(property->key());
-        builder()->ConvertAccumulatorToName(args[1]);
+        BuildLoadPropertyKey(property, args[1]);
         VisitForRegisterValue(property->value(), args[2]);
         VisitSetHomeObject(args[2], literal, property);
         builder()
@@ -2985,17 +2976,19 @@ void BytecodeGenerator::VisitCountOperation(CountOperation* expr) {
   }
 
   // Save result for postfix expressions.
+  FeedbackSlot count_slot = expr->CountBinaryOpFeedbackSlot();
   if (is_postfix) {
     // Convert old value into a number before saving it.
     old_value = register_allocator()->NewRegister();
+    // TODO(ignition): Think about adding proper PostInc/PostDec bytecodes
+    // instead of this ToNumber + Inc/Dec dance.
     builder()
-        ->ConvertAccumulatorToNumber(old_value)
+        ->ConvertAccumulatorToNumber(old_value, feedback_index(count_slot))
         .LoadAccumulatorWithRegister(old_value);
   }
 
   // Perform +1/-1 operation.
-  FeedbackSlot slot = expr->CountBinaryOpFeedbackSlot();
-  builder()->CountOperation(expr->binary_op(), feedback_index(slot));
+  builder()->CountOperation(expr->binary_op(), feedback_index(count_slot));
 
   // Store the value.
   builder()->SetExpressionPosition(expr);
@@ -3560,6 +3553,16 @@ void BytecodeGenerator::BuildPushUndefinedIntoRegisterList(
     RegisterList* reg_list) {
   Register reg = register_allocator()->GrowRegisterList(reg_list);
   builder()->LoadUndefined().StoreAccumulatorInRegister(reg);
+}
+
+void BytecodeGenerator::BuildLoadPropertyKey(LiteralProperty* property,
+                                             Register out_reg) {
+  if (property->key()->IsStringLiteral()) {
+    VisitForRegisterValue(property->key(), out_reg);
+  } else {
+    VisitForAccumulatorValue(property->key());
+    builder()->ConvertAccumulatorToName(out_reg);
+  }
 }
 
 // Visits the expression |expr| for testing its boolean value and jumping to the
