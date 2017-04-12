@@ -28,9 +28,6 @@ class Builtins {
  public:
   ~Builtins();
 
-  // Generate all builtin code objects. Should be called once during
-  // isolate initialization.
-  void SetUp(Isolate* isolate, bool create_heap_objects);
   void TearDown();
 
   // Garbage collection support.
@@ -61,9 +58,10 @@ class Builtins {
   Handle<Code> NonPrimitiveToPrimitive(
       ToPrimitiveHint hint = ToPrimitiveHint::kDefault);
   Handle<Code> OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint);
-  Handle<Code> InterpreterPushArgsAndCall(TailCallMode tail_call_mode,
-                                          InterpreterPushArgsMode mode);
-  Handle<Code> InterpreterPushArgsAndConstruct(InterpreterPushArgsMode mode);
+  Handle<Code> InterpreterPushArgsThenCall(ConvertReceiverMode receiver_mode,
+                                           TailCallMode tail_call_mode,
+                                           InterpreterPushArgsMode mode);
+  Handle<Code> InterpreterPushArgsThenConstruct(InterpreterPushArgsMode mode);
   Handle<Code> NewFunctionContext(ScopeType scope_type);
   Handle<Code> NewCloneShallowArray(AllocationSiteMode allocation_mode);
   Handle<Code> NewCloneShallowObject(int length);
@@ -107,6 +105,11 @@ class Builtins {
 
  private:
   Builtins();
+  // Used by SetupIsolateDelegate.
+  void MarkInitialized() {
+    DCHECK(!initialized_);
+    initialized_ = true;
+  }
 
   static void Generate_CallFunction(MacroAssembler* masm,
                                     ConvertReceiverMode mode,
@@ -120,11 +123,11 @@ class Builtins {
   static void Generate_CallForwardVarargs(MacroAssembler* masm,
                                           Handle<Code> code);
 
-  static void Generate_InterpreterPushArgsAndCallImpl(
-      MacroAssembler* masm, TailCallMode tail_call_mode,
-      InterpreterPushArgsMode mode);
+  static void Generate_InterpreterPushArgsThenCallImpl(
+      MacroAssembler* masm, ConvertReceiverMode receiver_mode,
+      TailCallMode tail_call_mode, InterpreterPushArgsMode mode);
 
-  static void Generate_InterpreterPushArgsAndConstructImpl(
+  static void Generate_InterpreterPushArgsThenConstructImpl(
       MacroAssembler* masm, InterpreterPushArgsMode mode);
 
 #define DECLARE_ASM(Name, ...) \
@@ -133,7 +136,7 @@ class Builtins {
   static void Generate_##Name(compiler::CodeAssemblerState* state);
 
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, DECLARE_TF, DECLARE_TF,
-               DECLARE_TF, DECLARE_ASM, DECLARE_ASM)
+               DECLARE_TF, DECLARE_TF, DECLARE_ASM, DECLARE_ASM)
 
 #undef DECLARE_ASM
 #undef DECLARE_TF
@@ -145,6 +148,7 @@ class Builtins {
   bool initialized_;
 
   friend class Isolate;
+  friend class SetupIsolateDelegate;
 
   DISALLOW_COPY_AND_ASSIGN(Builtins);
 };

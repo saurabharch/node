@@ -401,6 +401,29 @@ void Serializer::ObjectSerializer::SerializePrologue(AllocationSpace space,
 }
 
 void Serializer::ObjectSerializer::SerializeExternalString() {
+  Heap* heap = serializer_->isolate()->heap();
+  if (object_->map() != heap->native_source_string_map()) {
+    // Usually we cannot recreate resources for external strings. To work
+    // around this, external strings are serialized to look like ordinary
+    // sequential strings.
+    // The exception are native source code strings, since we can recreate
+    // their resources.
+    SerializeExternalStringAsSequentialString();
+  } else {
+    ExternalOneByteString* string = ExternalOneByteString::cast(object_);
+    DCHECK(string->is_short());
+    const NativesExternalStringResource* resource =
+        reinterpret_cast<const NativesExternalStringResource*>(
+            string->resource());
+    // Replace the resource field with the type and index of the native source.
+    string->set_resource(resource->EncodeForSerialization());
+    SerializeContent();
+    // Restore the resource field.
+    string->set_resource(resource);
+  }
+}
+
+void Serializer::ObjectSerializer::SerializeExternalStringAsSequentialString() {
   // Instead of serializing this as an external string, we serialize
   // an imaginary sequential string with the same content.
   Isolate* isolate = serializer_->isolate();
@@ -501,6 +524,11 @@ void Serializer::ObjectSerializer::Serialize() {
     PrintF("\n");
   }
 
+  if (object_->IsExternalString()) {
+    SerializeExternalString();
+    return;
+  }
+
   // We cannot serialize typed array objects correctly.
   DCHECK(!object_->IsJSTypedArray());
 
@@ -513,20 +541,10 @@ void Serializer::ObjectSerializer::Serialize() {
     Script::cast(object_)->set_line_ends(undefined);
   }
 
-  if (object_->IsExternalString()) {
-    Heap* heap = serializer_->isolate()->heap();
-    if (object_->map() != heap->native_source_string_map()) {
-      // Usually we cannot recreate resources for external strings. To work
-      // around this, external strings are serialized to look like ordinary
-      // sequential strings.
-      // The exception are native source code strings, since we can recreate
-      // their resources. In that case we fall through and leave it to
-      // VisitExternalOneByteString further down.
-      SerializeExternalString();
-      return;
-    }
-  }
+  SerializeContent();
+}
 
+void Serializer::ObjectSerializer::SerializeContent() {
   int size = object_->Size();
   Map* map = object_->map();
   AllocationSpace space =
@@ -713,52 +731,6 @@ void Serializer::ObjectSerializer::VisitCell(RelocInfo* rinfo) {
   Cell* object = Cell::cast(rinfo->target_cell());
   serializer_->SerializeObject(object, kPlain, kInnerPointer, skip);
   bytes_processed_so_far_ += kPointerSize;
-}
-
-bool Serializer::ObjectSerializer::SerializeExternalNativeSourceString(
-    int builtin_count,
-    v8::String::ExternalOneByteStringResource** resource_pointer,
-    FixedArray* source_cache, int resource_index) {
-  Isolate* isolate = serializer_->isolate();
-  for (int i = 0; i < builtin_count; i++) {
-    Object* source = source_cache->get(i);
-    if (!source->IsUndefined(isolate)) {
-      ExternalOneByteString* string = ExternalOneByteString::cast(source);
-      typedef v8::String::ExternalOneByteStringResource Resource;
-      const Resource* resource = string->resource();
-      if (resource == *resource_pointer) {
-        sink_->Put(resource_index, "NativesStringResource");
-        sink_->PutSection(i, "NativesStringResourceEnd");
-        bytes_processed_so_far_ += sizeof(resource);
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-void Serializer::ObjectSerializer::VisitExternalOneByteString(
-    v8::String::ExternalOneByteStringResource** resource_pointer) {
-  DCHECK_EQ(serializer_->isolate()->heap()->native_source_string_map(),
-            object_->map());
-  DCHECK(ExternalOneByteString::cast(object_)->is_short());
-  Address references_start = reinterpret_cast<Address>(resource_pointer);
-  OutputRawData(references_start);
-  if (SerializeExternalNativeSourceString(
-          Natives::GetBuiltinsCount(), resource_pointer,
-          Natives::GetSourceCache(serializer_->isolate()->heap()),
-          kNativesStringResource)) {
-    return;
-  }
-  if (SerializeExternalNativeSourceString(
-          ExtraNatives::GetBuiltinsCount(), resource_pointer,
-          ExtraNatives::GetSourceCache(serializer_->isolate()->heap()),
-          kExtraNativesStringResource)) {
-    return;
-  }
-  // One of the strings in the natives cache should match the resource.  We
-  // don't expect any other kinds of external strings here.
-  UNREACHABLE();
 }
 
 Address Serializer::ObjectSerializer::PrepareCode() {

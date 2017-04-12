@@ -1106,6 +1106,28 @@ class V8_EXPORT Module {
 };
 
 /**
+ * This is an unfinished experimental feature, and is only exposed
+ * here for internal testing purposes. DO NOT USE.
+ *
+ * A compiled JavaScript module.
+ */
+class V8_EXPORT DynamicImportResult {
+ public:
+  /**
+   * Resolves the promise with the namespace object of the given
+   * module.
+   */
+  V8_WARN_UNUSED_RESULT bool FinishDynamicImportSuccess(Local<Context> context,
+                                                        Local<Module> module);
+
+  /**
+   * Rejects the promise with the given exception.
+   */
+  V8_WARN_UNUSED_RESULT bool FinishDynamicImportFailure(Local<Context> context,
+                                                        Local<Value> exception);
+};
+
+/**
  * A compiled JavaScript script, tied to a Context which was active when the
  * script was compiled.
  */
@@ -1542,6 +1564,8 @@ class V8_EXPORT StackTrace {
   /**
    * Flags that determine what information is placed captured for each
    * StackFrame when grabbing the current stack trace.
+   * Note: these options are deprecated and we always collect all available
+   * information (kDetailed).
    */
   enum StackTraceOptions {
     kLineNumber = 1,
@@ -1570,7 +1594,7 @@ class V8_EXPORT StackTrace {
   /**
    * Returns StackTrace as a v8::Array that contains StackFrame objects.
    */
-  Local<Array> AsArray();
+  V8_DEPRECATED("Use native API instead", Local<Array> AsArray());
 
   /**
    * Grab a snapshot of the current JavaScript execution stack.
@@ -1580,9 +1604,7 @@ class V8_EXPORT StackTrace {
    *   StackFrame.
    */
   static Local<StackTrace> CurrentStackTrace(
-      Isolate* isolate,
-      int frame_limit,
-      StackTraceOptions options = kOverview);
+      Isolate* isolate, int frame_limit, StackTraceOptions options = kDetailed);
 };
 
 
@@ -1646,6 +1668,11 @@ class V8_EXPORT StackFrame {
    * constructor via "new".
    */
   bool IsConstructor() const;
+
+  /**
+   * Returns whether or not the associated functions is defined in wasm.
+   */
+  bool IsWasm() const;
 };
 
 
@@ -4755,7 +4782,8 @@ class V8_EXPORT External : public Value {
   F(ArrayProto_entries, array_entries_iterator)  \
   F(ArrayProto_forEach, array_for_each_iterator) \
   F(ArrayProto_keys, array_keys_iterator)        \
-  F(ArrayProto_values, array_values_iterator)
+  F(ArrayProto_values, array_values_iterator)    \
+  F(IteratorPrototype, initial_iterator_prototype)
 
 enum Intrinsic {
 #define V8_DECL_INTRINSIC(name, iname) k##name,
@@ -5943,6 +5971,25 @@ typedef void (*CallCompletedCallback)(Isolate*);
 typedef void (*DeprecatedCallCompletedCallback)();
 
 /**
+ * HostImportDynamicallyCallback is called when we require the
+ * embedder to load a module. This is used as part of the dynamic
+ * import syntax. The behavior of this callback is not specified in
+ * EcmaScript.
+ *
+ * The referrer is the name of the file which calls the dynamic
+ * import. The referrer can be used to resolve the module location.
+ *
+ * The specifier is the name of the module that should be imported.
+ *
+ * The DynamicImportResult object is used to signal success or failure
+ * by calling it's respective methods.
+ *
+ */
+typedef void (*HostImportModuleDynamicallyCallback)(
+    Isolate* isolate, Local<String> referrer, Local<String> specifier,
+    Local<DynamicImportResult> result);
+
+/**
  * PromiseHook with type kInit is called when a new promise is
  * created. When a new promise is created as part of the chain in the
  * case of Promise.then or in the intermediate promises created by
@@ -6489,7 +6536,8 @@ class V8_EXPORT Isolate {
           add_histogram_sample_callback(nullptr),
           array_buffer_allocator(nullptr),
           external_references(nullptr),
-          allow_atomics_wait(true) {}
+          allow_atomics_wait(true),
+          host_import_module_dynamically_callback_(nullptr) {}
 
     /**
      * The optional entry_hook allows the host application to provide the
@@ -6552,6 +6600,16 @@ class V8_EXPORT Isolate {
      * this isolate.
      */
     bool allow_atomics_wait;
+
+    /**
+     * This is an unfinished experimental feature, and is only exposed
+     * here for internal testing purposes. DO NOT USE.
+     *
+     * This specifies the callback called by the upcoming dynamic
+     * import() language feature to load modules.
+     */
+    HostImportModuleDynamicallyCallback
+        host_import_module_dynamically_callback_;
   };
 
 

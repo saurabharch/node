@@ -370,8 +370,23 @@ void CallPrinter::VisitEmptyParentheses(EmptyParentheses* node) {
 }
 
 void CallPrinter::VisitGetIterator(GetIterator* node) {
-  Print("GetIterator(");
+  // Because CallPrinter is used by RenderCallSite() in runtime-internal.cc,
+  // and the GetIterator node results in a Call, either to a [@@iterator] or
+  // [@@asyncIterator]. It's unknown which call this error refers to, so we
+  // assume it's the first call.
+  bool was_found = !found_ && node->position() == position_;
+  if (was_found) {
+    found_ = true;
+  }
   Find(node->iterable(), true);
+  Print(node->hint() == IteratorType::kNormal ? "[Symbol.iterator]"
+                                              : "[Symbol.asyncIterator]");
+  if (was_found) done_ = true;
+}
+
+void CallPrinter::VisitImportCallExpression(ImportCallExpression* node) {
+  Print("ImportCall(");
+  Find(node->argument(), true);
   Print(")");
 }
 
@@ -1192,6 +1207,11 @@ void AstPrinter::VisitEmptyParentheses(EmptyParentheses* node) {
 void AstPrinter::VisitGetIterator(GetIterator* node) {
   IndentedScope indent(this, "GET-ITERATOR", node->position());
   Visit(node->iterable());
+}
+
+void AstPrinter::VisitImportCallExpression(ImportCallExpression* node) {
+  IndentedScope indent(this, "IMPORT-CALL", node->position());
+  Visit(node->argument());
 }
 
 void AstPrinter::VisitThisFunction(ThisFunction* node) {

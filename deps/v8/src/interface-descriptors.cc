@@ -43,7 +43,7 @@ const char* CallInterfaceDescriptor::DebugName(Isolate* isolate) const {
   DCHECK(index < CallDescriptors::NUMBER_OF_DESCRIPTORS);
   CallDescriptors::Key key = static_cast<CallDescriptors::Key>(index);
   switch (key) {
-#define DEF_CASE(NAME)        \
+#define DEF_CASE(NAME, ...)   \
   case CallDescriptors::NAME: \
     return #NAME " Descriptor";
     INTERFACE_DESCRIPTOR_LIST(DEF_CASE)
@@ -607,7 +607,7 @@ void InterpreterDispatchDescriptor::InitializePlatformIndependent(
                                       machine_types);
 }
 
-void InterpreterPushArgsAndCallDescriptor::InitializePlatformIndependent(
+void InterpreterPushArgsThenCallDescriptor::InitializePlatformIndependent(
     CallInterfaceDescriptorData* data) {
   // kNumberOfArguments, kFirstArgument, kFunction
   MachineType machine_types[] = {MachineType::Int32(), MachineType::Pointer(),
@@ -616,7 +616,7 @@ void InterpreterPushArgsAndCallDescriptor::InitializePlatformIndependent(
                                       machine_types);
 }
 
-void InterpreterPushArgsAndConstructDescriptor::InitializePlatformIndependent(
+void InterpreterPushArgsThenConstructDescriptor::InitializePlatformIndependent(
     CallInterfaceDescriptorData* data) {
   // kNumberOfArguments, kNewTarget, kConstructor, kFeedbackElement,
   // kFirstArgument
@@ -627,7 +627,7 @@ void InterpreterPushArgsAndConstructDescriptor::InitializePlatformIndependent(
                                       machine_types);
 }
 
-void InterpreterPushArgsAndConstructArrayDescriptor::
+void InterpreterPushArgsThenConstructArrayDescriptor::
     InitializePlatformIndependent(CallInterfaceDescriptorData* data) {
   // kNumberOfArguments, kFunction, kFeedbackElement, kFirstArgument
   MachineType machine_types[] = {MachineType::Int32(), MachineType::AnyTagged(),

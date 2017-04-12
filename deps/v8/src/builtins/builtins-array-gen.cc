@@ -13,8 +13,8 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
  public:
   explicit ArrayBuiltinCodeStubAssembler(compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state),
-        k_(this, MachineRepresentation::kTagged, SmiConstant(0)),
-        a_(this, MachineRepresentation::kTagged, SmiConstant(0)),
+        k_(this, MachineRepresentation::kTagged),
+        a_(this, MachineRepresentation::kTagged),
         to_(this, MachineRepresentation::kTagged, SmiConstant(0)) {}
 
   typedef std::function<Node*(ArrayBuiltinCodeStubAssembler* masm)>
@@ -65,7 +65,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
   }
 
   Node* ReduceResultGenerator() {
-    Variable a(this, MachineRepresentation::kTagged, UndefinedConstant());
+    VARIABLE(a, MachineRepresentation::kTagged, UndefinedConstant());
     Label no_initial_value(this), has_initial_value(this), done(this, {&a});
 
     // 8. If initialValue is present, then
@@ -99,7 +99,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
   }
 
   Node* ReduceProcessor(Node* k_value, Node* k) {
-    Variable result(this, MachineRepresentation::kTagged);
+    VARIABLE(result, MachineRepresentation::kTagged);
     Label done(this, {&result}), initial(this);
     GotoIf(WordEqual(a(), TheHoleConstant()), &initial);
     result.Bind(CallJS(CodeFactory::Call(isolate()), context(), callbackfn(),
@@ -186,9 +186,6 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
     new_target_ = new_target;
     callbackfn_ = callbackfn;
     this_arg_ = this_arg;
-
-    k_.Bind(SmiConstant(0));
-    a_.Bind(UndefinedConstant());
   }
 
   void GenerateIteratingArrayBuiltinBody(
@@ -215,7 +212,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 
     // 3. Let len be ToLength(Get(O, "length")).
     // 4. ReturnIfAbrupt(len).
-    Variable merged_length(this, MachineRepresentation::kTagged);
+    VARIABLE(merged_length, MachineRepresentation::kTagged);
     Label has_length(this, &merged_length), not_js_array(this);
     GotoIf(DoesntHaveInstanceType(o(), JS_ARRAY_TYPE), &not_js_array);
     merged_length.Bind(LoadJSArrayLength(o()));
@@ -261,8 +258,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
       // 7. Let k be 0.
       k_.Bind(SmiConstant(0));
     } else {
-      k_.Bind(len());
-      k_.Bind(NumberDec(k_.value()));
+      k_.Bind(NumberDec(len()));
     }
 
     a_.Bind(generator(this));
@@ -297,7 +293,8 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 
   void GenerateIteratingTypedArrayBuiltinBody(
       const char* name, const BuiltinResultGenerator& generator,
-      const CallResultProcessor& processor, const PostLoopAction& action) {
+      const CallResultProcessor& processor, const PostLoopAction& action,
+      ForEachDirection direction = ForEachDirection::kForward) {
     Node* name_string =
         HeapConstant(isolate()->factory()->NewStringFromAsciiChecked(name));
 
@@ -364,6 +361,12 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
     }
 
     BIND(&distinguish_types);
+
+    if (direction == ForEachDirection::kForward) {
+      k_.Bind(SmiConstant(0));
+    } else {
+      k_.Bind(NumberDec(len()));
+    }
     a_.Bind(generator(this));
     Node* elements_type = LoadInstanceType(LoadElements(o_));
     Switch(elements_type, &unexpected_instance_type, instance_types.data(),
@@ -377,11 +380,11 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
       VisitAllTypedArrayElements(
           ElementsKindForInstanceType(
               static_cast<InstanceType>(instance_types[i])),
-          array_buffer, processor, &done);
+          array_buffer, processor, &done, direction);
       Goto(&done);
-      action(this);
       // No exception, return success
       BIND(&done);
+      action(this);
       Return(a_.value());
     }
   }
@@ -458,7 +461,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 
   void VisitAllTypedArrayElements(ElementsKind kind, Node* array_buffer,
                                   const CallResultProcessor& processor,
-                                  Label* detached) {
+                                  Label* detached, ForEachDirection direction) {
     VariableList list({&a_, &k_, &to_}, zone());
 
     FastLoopBody body = [&](Node* index) {
@@ -475,8 +478,17 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
       k_.Bind(index);
       a_.Bind(processor(this, value, index));
     };
-    BuildFastLoop(list, SmiConstant(0), len_, body, 1,
-                  ParameterMode::SMI_PARAMETERS, IndexAdvanceMode::kPost);
+    Node* start = SmiConstant(0);
+    Node* end = len_;
+    IndexAdvanceMode advance_mode = IndexAdvanceMode::kPost;
+    int incr = 1;
+    if (direction == ForEachDirection::kReverse) {
+      std::swap(start, end);
+      advance_mode = IndexAdvanceMode::kPre;
+      incr = -1;
+    }
+    BuildFastLoop(list, start, end, body, incr, ParameterMode::SMI_PARAMETERS,
+                  advance_mode);
   }
 
   void VisitAllFastElementsOneKind(ElementsKind kind,
@@ -484,7 +496,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
                                    Label* array_changed, ParameterMode mode,
                                    ForEachDirection direction) {
     Comment("begin VisitAllFastElementsOneKind");
-    Variable original_map(this, MachineRepresentation::kTagged);
+    VARIABLE(original_map, MachineRepresentation::kTagged);
     original_map.Bind(LoadMap(o()));
     VariableList list({&original_map, &a_, &k_, &to_}, zone());
     Node* start = IntPtrOrSmiConstant(0, mode);
@@ -607,7 +619,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 };
 
 TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
-  Variable arg_index(this, MachineType::PointerRepresentation());
+  VARIABLE(arg_index, MachineType::PointerRepresentation());
   Label default_label(this, &arg_index);
   Label smi_transition(this);
   Label object_push_pre(this);
@@ -948,6 +960,23 @@ TF_BUILTIN(ArrayReduce, ArrayBuiltinCodeStubAssembler) {
       CodeFactory::ArrayReduceLoopContinuation(isolate()));
 }
 
+TF_BUILTIN(TypedArrayPrototypeReduce, ArrayBuiltinCodeStubAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* initial_value = Parameter(Descriptor::kInitialValue);
+  Node* new_target = Parameter(Descriptor::kNewTarget);
+
+  InitIteratingArrayBuiltinBody(context, receiver, callbackfn, initial_value,
+                                new_target);
+
+  GenerateIteratingTypedArrayBuiltinBody(
+      "%TypedArray%.prototype.reduce",
+      &ArrayBuiltinCodeStubAssembler::ReduceResultGenerator,
+      &ArrayBuiltinCodeStubAssembler::ReduceProcessor,
+      &ArrayBuiltinCodeStubAssembler::ReducePostLoopAction);
+}
+
 TF_BUILTIN(ArrayReduceRightLoopContinuation, ArrayBuiltinCodeStubAssembler) {
   Node* context = Parameter(Descriptor::kContext);
   Node* receiver = Parameter(Descriptor::kReceiver);
@@ -985,6 +1014,24 @@ TF_BUILTIN(ArrayReduceRight, ArrayBuiltinCodeStubAssembler) {
       &ArrayBuiltinCodeStubAssembler::ReduceProcessor,
       &ArrayBuiltinCodeStubAssembler::ReducePostLoopAction,
       CodeFactory::ArrayReduceRightLoopContinuation(isolate()),
+      ForEachDirection::kReverse);
+}
+
+TF_BUILTIN(TypedArrayPrototypeReduceRight, ArrayBuiltinCodeStubAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* initial_value = Parameter(Descriptor::kInitialValue);
+  Node* new_target = Parameter(Descriptor::kNewTarget);
+
+  InitIteratingArrayBuiltinBody(context, receiver, callbackfn, initial_value,
+                                new_target);
+
+  GenerateIteratingTypedArrayBuiltinBody(
+      "%TypedArray%.prototype.reduceRight",
+      &ArrayBuiltinCodeStubAssembler::ReduceResultGenerator,
+      &ArrayBuiltinCodeStubAssembler::ReduceProcessor,
+      &ArrayBuiltinCodeStubAssembler::ReducePostLoopAction,
       ForEachDirection::kReverse);
 }
 
@@ -1095,7 +1142,7 @@ TF_BUILTIN(ArrayIncludes, CodeStubAssembler) {
   Node* const start_from = Parameter(Descriptor::kFromIndex);
   Node* const context = Parameter(Descriptor::kContext);
 
-  Variable index_var(this, MachineType::PointerRepresentation());
+  VARIABLE(index_var, MachineType::PointerRepresentation());
 
   Label init_k(this), return_true(this), return_false(this), call_runtime(this);
   Label init_len(this), select_loop(this);
@@ -1151,7 +1198,7 @@ TF_BUILTIN(ArrayIncludes, CodeStubAssembler) {
 
   BIND(&if_smiorobjects);
   {
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
     Label ident_loop(this, &index_var), heap_num_loop(this, &search_num),
         string_loop(this, &index_var), undef_loop(this, &index_var),
         not_smi(this), not_heap_num(this);
@@ -1258,7 +1305,7 @@ TF_BUILTIN(ArrayIncludes, CodeStubAssembler) {
   {
     Label nan_loop(this, &index_var), not_nan_loop(this, &index_var),
         hole_loop(this, &index_var), search_notnan(this);
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
     search_num.Bind(SmiToFloat64(search_element));
@@ -1303,7 +1350,7 @@ TF_BUILTIN(ArrayIncludes, CodeStubAssembler) {
   {
     Label nan_loop(this, &index_var), not_nan_loop(this, &index_var),
         hole_loop(this, &index_var), search_notnan(this);
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
     search_num.Bind(SmiToFloat64(search_element));
@@ -1387,9 +1434,9 @@ TF_BUILTIN(ArrayIndexOf, CodeStubAssembler) {
   Node* intptr_zero = IntPtrConstant(0);
   Node* intptr_one = IntPtrConstant(1);
 
-  Variable len_var(this, MachineType::PointerRepresentation()),
-      index_var(this, MachineType::PointerRepresentation()),
-      start_from_var(this, MachineType::PointerRepresentation());
+  VARIABLE(len_var, MachineType::PointerRepresentation());
+  VARIABLE(index_var, MachineType::PointerRepresentation());
+  VARIABLE(start_from_var, MachineType::PointerRepresentation());
 
   Label init_k(this), return_found(this), return_not_found(this),
       call_runtime(this);
@@ -1488,7 +1535,7 @@ TF_BUILTIN(ArrayIndexOf, CodeStubAssembler) {
 
   BIND(&if_smiorobjects);
   {
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
     Label ident_loop(this, &index_var), heap_num_loop(this, &search_num),
         string_loop(this, &index_var), not_smi(this), not_heap_num(this);
 
@@ -1569,7 +1616,7 @@ TF_BUILTIN(ArrayIndexOf, CodeStubAssembler) {
   BIND(&if_packed_doubles);
   {
     Label not_nan_loop(this, &index_var), search_notnan(this);
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
     search_num.Bind(SmiToFloat64(search_element));
@@ -1599,7 +1646,7 @@ TF_BUILTIN(ArrayIndexOf, CodeStubAssembler) {
   BIND(&if_holey_doubles);
   {
     Label not_nan_loop(this, &index_var), search_notnan(this);
-    Variable search_num(this, MachineRepresentation::kFloat64);
+    VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
     search_num.Bind(SmiToFloat64(search_element));
@@ -1651,9 +1698,9 @@ class ArrayPrototypeIterationAssembler : public CodeStubAssembler {
  protected:
   void Generate_ArrayPrototypeIterationMethod(Node* context, Node* receiver,
                                               IterationKind iteration_kind) {
-    Variable var_array(this, MachineRepresentation::kTagged);
-    Variable var_map(this, MachineRepresentation::kTagged);
-    Variable var_type(this, MachineRepresentation::kWord32);
+    VARIABLE(var_array, MachineRepresentation::kTagged);
+    VARIABLE(var_map, MachineRepresentation::kTagged);
+    VARIABLE(var_type, MachineRepresentation::kWord32);
 
     Label if_isnotobject(this, Label::kDeferred);
     Label create_array_iterator(this);
@@ -1709,8 +1756,8 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
   Node* context = Parameter(Descriptor::kContext);
   Node* iterator = Parameter(Descriptor::kReceiver);
 
-  Variable var_value(this, MachineRepresentation::kTagged);
-  Variable var_done(this, MachineRepresentation::kTagged);
+  VARIABLE(var_value, MachineRepresentation::kTagged);
+  VARIABLE(var_done, MachineRepresentation::kTagged);
 
   // Required, or else `throw_bad_receiver` fails a DCHECK due to these
   // variables not being bound along all paths, despite not being used.
@@ -1859,7 +1906,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
 
       Node* length = nullptr;
       {
-        Variable var_length(this, MachineRepresentation::kTagged);
+        VARIABLE(var_length, MachineRepresentation::kTagged);
         Label if_isarray(this), if_isnotarray(this), done(this);
         Branch(Word32Equal(array_type, Int32Constant(JS_ARRAY_TYPE)),
                &if_isarray, &if_isnotarray);

@@ -2044,6 +2044,39 @@ Local<UnboundScript> Script::GetUnboundScript() {
       i::Handle<i::SharedFunctionInfo>(i::JSFunction::cast(*obj)->shared()));
 }
 
+bool DynamicImportResult::FinishDynamicImportSuccess(Local<Context> context,
+                                                     Local<Module> module) {
+  PREPARE_FOR_EXECUTION_BOOL(context, Module, FinishDynamicImportSuccess);
+  auto promise = Utils::OpenHandle(this);
+  i::Handle<i::Module> module_obj = Utils::OpenHandle(*module);
+  i::Handle<i::JSModuleNamespace> module_namespace =
+      i::Module::GetModuleNamespace(module_obj);
+  i::Handle<i::Object> argv[] = {promise, module_namespace};
+  has_pending_exception =
+      i::Execution::Call(isolate, isolate->promise_resolve(),
+                         isolate->factory()->undefined_value(), arraysize(argv),
+                         argv)
+          .is_null();
+  RETURN_ON_FAILED_EXECUTION_BOOL();
+  return true;
+}
+
+bool DynamicImportResult::FinishDynamicImportFailure(Local<Context> context,
+                                                     Local<Value> exception) {
+  PREPARE_FOR_EXECUTION_BOOL(context, Module, FinishDynamicImportFailure);
+  auto promise = Utils::OpenHandle(this);
+  // We pass true to trigger the debugger's on exception handler.
+  i::Handle<i::Object> argv[] = {promise, Utils::OpenHandle(*exception),
+                                 isolate->factory()->ToBoolean(true)};
+  has_pending_exception =
+      i::Execution::Call(isolate, isolate->promise_internal_reject(),
+                         isolate->factory()->undefined_value(), arraysize(argv),
+                         argv)
+          .is_null();
+  RETURN_ON_FAILED_EXECUTION_BOOL();
+  return true;
+}
+
 int Module::GetModuleRequestsLength() const {
   i::Handle<i::Module> self = Utils::OpenHandle(this);
   return self->info()->module_requests()->length();
@@ -2855,9 +2888,63 @@ int StackTrace::GetFrameCount() const {
   return i::Smi::cast(Utils::OpenHandle(this)->length())->value();
 }
 
+namespace {
+i::Handle<i::JSObject> NewFrameObject(i::Isolate* isolate,
+                                      i::Handle<i::StackFrameInfo> frame) {
+  i::Handle<i::JSObject> frame_obj =
+      isolate->factory()->NewJSObject(isolate->object_function());
+  i::JSObject::AddProperty(
+      frame_obj, handle(isolate->heap()->line_string()),
+      handle(i::Smi::FromInt(frame->line_number() + 1), isolate), i::NONE);
+  i::JSObject::AddProperty(
+      frame_obj, handle(isolate->heap()->column_string()),
+      handle(i::Smi::FromInt(frame->column_number() + 1), isolate), i::NONE);
+  i::JSObject::AddProperty(frame_obj,
+                           isolate->factory()->InternalizeOneByteString(
+                               STATIC_CHAR_VECTOR("scriptId")),
+                           handle(i::Smi::FromInt(frame->script_id()), isolate),
+                           i::NONE);
+  i::JSObject::AddProperty(frame_obj,
+                           isolate->factory()->InternalizeOneByteString(
+                               STATIC_CHAR_VECTOR("scriptName")),
+                           handle(frame->script_name(), isolate), i::NONE);
+  i::JSObject::AddProperty(frame_obj,
+                           isolate->factory()->InternalizeOneByteString(
+                               STATIC_CHAR_VECTOR("scriptNameOrSourceURL")),
+                           handle(frame->script_name_or_source_url(), isolate),
+                           i::NONE);
+  i::JSObject::AddProperty(frame_obj,
+                           isolate->factory()->InternalizeOneByteString(
+                               STATIC_CHAR_VECTOR("functionName")),
+                           handle(frame->function_name(), isolate), i::NONE);
+  i::JSObject::AddProperty(frame_obj,
+                           isolate->factory()->InternalizeOneByteString(
+                               STATIC_CHAR_VECTOR("isEval")),
+                           isolate->factory()->ToBoolean(frame->is_eval()),
+                           i::NONE);
+  i::JSObject::AddProperty(
+      frame_obj,
+      isolate->factory()->InternalizeOneByteString(
+          STATIC_CHAR_VECTOR("isConstructor")),
+      isolate->factory()->ToBoolean(frame->is_constructor()), i::NONE);
+  return frame_obj;
+}
+}  // namespace
 
 Local<Array> StackTrace::AsArray() {
-  return Utils::ToLocal(Utils::OpenHandle(this));
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  i::Handle<i::JSArray> self = Utils::OpenHandle(this);
+  int frame_count = GetFrameCount();
+  i::Handle<i::FixedArray> frames =
+      isolate->factory()->NewFixedArray(frame_count);
+  for (int i = 0; i < frame_count; ++i) {
+    auto obj = i::JSReceiver::GetElement(isolate, self, i).ToHandleChecked();
+    auto frame = i::Handle<i::StackFrameInfo>::cast(obj);
+    i::Handle<i::JSObject> frame_obj = NewFrameObject(isolate, frame);
+    frames->set(i, *frame_obj);
+  }
+  return Utils::ToLocal(isolate->factory()->NewJSArrayWithElements(
+      frames, i::FAST_ELEMENTS, frame_count));
 }
 
 
@@ -2930,6 +3017,7 @@ bool StackFrame::IsConstructor() const {
   return Utils::OpenHandle(this)->is_constructor();
 }
 
+bool StackFrame::IsWasm() const { return Utils::OpenHandle(this)->is_wasm(); }
 
 // --- N a t i v e W e a k M a p ---
 
@@ -8181,6 +8269,12 @@ Isolate* Isolate::GetCurrent() {
 
 Isolate* Isolate::New(const Isolate::CreateParams& params) {
   i::Isolate* isolate = new i::Isolate(false);
+  return IsolateNewImpl(isolate, params);
+}
+
+// This is separate so that tests can provide a different |isolate|.
+Isolate* IsolateNewImpl(internal::Isolate* isolate,
+                        const v8::Isolate::CreateParams& params) {
   Isolate* v8_isolate = reinterpret_cast<Isolate*>(isolate);
   CHECK(params.array_buffer_allocator != NULL);
   isolate->set_array_buffer_allocator(params.array_buffer_allocator);
@@ -8224,6 +8318,12 @@ Isolate* Isolate::New(const Isolate::CreateParams& params) {
 
   isolate->set_api_external_references(params.external_references);
   isolate->set_allow_atomics_wait(params.allow_atomics_wait);
+
+  if (params.host_import_module_dynamically_callback_ != nullptr) {
+    isolate->SetHostImportModuleDynamicallyCallback(
+        params.host_import_module_dynamically_callback_);
+  }
+
   SetResourceConstraints(isolate, params.constraints);
   // TODO(jochen): Once we got rid of Isolate::Current(), we can remove this.
   Isolate::Scope isolate_scope(v8_isolate);
@@ -8577,6 +8677,7 @@ void Isolate::SetCreateHistogramFunction(CreateHistogramCallback callback) {
   isolate->stats_table()->SetCreateHistogramFunction(callback);
   isolate->InitializeLoggingAndCounters();
   isolate->counters()->ResetHistograms();
+  isolate->counters()->InitializeHistograms();
 }
 
 
@@ -8796,30 +8897,10 @@ bool Isolate::IsInUse() {
 }
 
 
-class VisitorAdapter : public i::ObjectVisitor {
- public:
-  explicit VisitorAdapter(PersistentHandleVisitor* visitor)
-      : visitor_(visitor) {}
-  void VisitPointers(i::Object** start, i::Object** end) override {
-    UNREACHABLE();
-  }
-  DISABLE_CFI_PERF
-  void VisitEmbedderReference(i::Object** p, uint16_t class_id) override {
-    Value* value = ToApi<Value>(i::Handle<i::Object>(p));
-    visitor_->VisitPersistentHandle(
-        reinterpret_cast<Persistent<Value>*>(&value), class_id);
-  }
-
- private:
-  PersistentHandleVisitor* visitor_;
-};
-
-
 void Isolate::VisitHandlesWithClassIds(PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateAllRootsWithClassIds(&visitor_adapter);
+  isolate->global_handles()->IterateAllRootsWithClassIds(visitor);
 }
 
 
@@ -8827,18 +8908,14 @@ void Isolate::VisitHandlesForPartialDependence(
     PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateAllRootsInNewSpaceWithClassIds(
-      &visitor_adapter);
+  isolate->global_handles()->IterateAllRootsInNewSpaceWithClassIds(visitor);
 }
 
 
 void Isolate::VisitWeakHandles(PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateWeakRootsInNewSpaceWithClassIds(
-      &visitor_adapter);
+  isolate->global_handles()->IterateWeakRootsInNewSpaceWithClassIds(visitor);
 }
 
 

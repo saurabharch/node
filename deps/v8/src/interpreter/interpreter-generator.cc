@@ -73,11 +73,13 @@ class InterpreterGenerator {
   void DoKeyedStoreIC(Callable ic, InterpreterAssembler* assembler);
 
   // Generates code to perform a JS call that collects type feedback.
-  void DoJSCall(InterpreterAssembler* assembler, TailCallMode tail_call_mode);
+  void DoJSCall(InterpreterAssembler* assembler,
+                ConvertReceiverMode receiver_mode, TailCallMode tail_call_mode);
 
   // Generates code to perform a JS call with a known number of arguments that
   // collects type feedback.
-  void DoJSCallN(InterpreterAssembler* assembler, int n);
+  void DoJSCallN(InterpreterAssembler* assembler, int n,
+                 ConvertReceiverMode receiver_mode);
 
   // Generates code to perform delete via function_id.
   void DoDelete(Runtime::FunctionId function_id,
@@ -1459,19 +1461,17 @@ void InterpreterGenerator::DoShiftRightLogical(
   DoBitwiseBinaryOp(Token::SHR, assembler);
 }
 
-// AddSmi <imm> <reg>
+// AddSmi <imm>
 //
-// Adds an immediate value <imm> to register <reg>. For this
-// operation <reg> is the lhs operand and <imm> is the <rhs> operand.
+// Adds an immediate value <imm> to the value in the accumulator.
 void InterpreterGenerator::DoAddSmi(InterpreterAssembler* assembler) {
   Variable var_result(assembler, MachineRepresentation::kTagged);
   Label fastpath(assembler), slowpath(assembler, Label::kDeferred),
       end(assembler);
 
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
 
   // {right} is known to be a Smi.
@@ -1511,19 +1511,17 @@ void InterpreterGenerator::DoAddSmi(InterpreterAssembler* assembler) {
   }
 }
 
-// SubSmi <imm> <reg>
+// SubSmi <imm>
 //
-// Subtracts an immediate value <imm> to register <reg>. For this
-// operation <reg> is the lhs operand and <imm> is the rhs operand.
+// Subtracts an immediate value <imm> from the value in the accumulator.
 void InterpreterGenerator::DoSubSmi(InterpreterAssembler* assembler) {
   Variable var_result(assembler, MachineRepresentation::kTagged);
   Label fastpath(assembler), slowpath(assembler, Label::kDeferred),
       end(assembler);
 
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
 
   // {right} is known to be a Smi.
@@ -1563,17 +1561,143 @@ void InterpreterGenerator::DoSubSmi(InterpreterAssembler* assembler) {
   }
 }
 
-// BitwiseOr <imm> <reg>
+// MulSmi <imm>
 //
-// BitwiseOr <reg> with <imm>. For this operation <reg> is the lhs
-// operand and <imm> is the rhs operand.
-void InterpreterGenerator::DoBitwiseOrSmi(InterpreterAssembler* assembler) {
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+// Multiplies an immediate value <imm> to the value in the accumulator.
+void InterpreterGenerator::DoMulSmi(InterpreterAssembler* assembler) {
+  Variable var_result(assembler, MachineRepresentation::kTagged);
+  Label fastpath(assembler), slowpath(assembler, Label::kDeferred),
+      end(assembler);
+
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* context = __ GetContext();
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
+
+  // {right} is known to be a Smi.
+  // Check if the {left} is a Smi take the fast path.
+  __ Branch(__ TaggedIsSmi(left), &fastpath, &slowpath);
+  __ Bind(&fastpath);
+  {
+    // Both {lhs} and {rhs} are Smis. The result is not necessarily a smi,
+    // in case of overflow.
+    var_result.Bind(__ SmiMul(left, right));
+    Node* feedback = __ SelectSmiConstant(__ TaggedIsSmi(var_result.value()),
+                                          BinaryOperationFeedback::kSignedSmall,
+                                          BinaryOperationFeedback::kNumber);
+    __ UpdateFeedback(feedback, feedback_vector, slot_index);
+    __ Goto(&end);
+  }
+  __ Bind(&slowpath);
+  {
+    Node* context = __ GetContext();
+    // TODO(ishell): pass slot as word-size value.
+    var_result.Bind(
+        __ CallBuiltin(Builtins::kMultiplyWithFeedback, context, left, right,
+                       __ TruncateWordToWord32(slot_index), feedback_vector));
+    __ Goto(&end);
+  }
+
+  __ Bind(&end);
+  {
+    __ SetAccumulator(var_result.value());
+    __ Dispatch();
+  }
+}
+
+// DivSmi <imm>
+//
+// Divides the value in the accumulator by immediate value <imm>.
+void InterpreterGenerator::DoDivSmi(InterpreterAssembler* assembler) {
+  Variable var_result(assembler, MachineRepresentation::kTagged);
+  Label fastpath(assembler), slowpath(assembler, Label::kDeferred),
+      end(assembler);
+
+  Node* left = __ GetAccumulator();
+  Node* right = __ BytecodeOperandImmSmi(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* feedback_vector = __ LoadFeedbackVector();
+
+  // {right} is known to be a Smi.
+  // Check if the {left} is a Smi take the fast path.
+  __ Branch(__ TaggedIsSmi(left), &fastpath, &slowpath);
+  __ Bind(&fastpath);
+  {
+    var_result.Bind(__ TrySmiDiv(left, right, &slowpath));
+    __ UpdateFeedback(__ SmiConstant(BinaryOperationFeedback::kSignedSmall),
+                      feedback_vector, slot_index);
+    __ Goto(&end);
+  }
+  __ Bind(&slowpath);
+  {
+    Node* context = __ GetContext();
+    // TODO(ishell): pass slot as word-size value.
+    var_result.Bind(__ CallBuiltin(Builtins::kDivideWithFeedback, context, left,
+                                   right, __ TruncateWordToWord32(slot_index),
+                                   feedback_vector));
+    __ Goto(&end);
+  }
+
+  __ Bind(&end);
+  {
+    __ SetAccumulator(var_result.value());
+    __ Dispatch();
+  }
+}
+
+// ModSmi <imm>
+//
+// Modulo accumulator by immediate value <imm>.
+void InterpreterGenerator::DoModSmi(InterpreterAssembler* assembler) {
+  Variable var_result(assembler, MachineRepresentation::kTagged);
+  Label fastpath(assembler), slowpath(assembler, Label::kDeferred),
+      end(assembler);
+
+  Node* left = __ GetAccumulator();
+  Node* right = __ BytecodeOperandImmSmi(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* feedback_vector = __ LoadFeedbackVector();
+
+  // {right} is known to be a Smi.
+  // Check if the {left} is a Smi take the fast path.
+  __ Branch(__ TaggedIsSmi(left), &fastpath, &slowpath);
+  __ Bind(&fastpath);
+  {
+    // Both {lhs} and {rhs} are Smis. The result is not necessarily a smi.
+    var_result.Bind(__ SmiMod(left, right));
+    Node* feedback = __ SelectSmiConstant(__ TaggedIsSmi(var_result.value()),
+                                          BinaryOperationFeedback::kSignedSmall,
+                                          BinaryOperationFeedback::kNumber);
+    __ UpdateFeedback(feedback, feedback_vector, slot_index);
+    __ Goto(&end);
+  }
+  __ Bind(&slowpath);
+  {
+    Node* context = __ GetContext();
+    // TODO(ishell): pass slot as word-size value.
+    var_result.Bind(
+        __ CallBuiltin(Builtins::kModulusWithFeedback, context, left, right,
+                       __ TruncateWordToWord32(slot_index), feedback_vector));
+    __ Goto(&end);
+  }
+
+  __ Bind(&end);
+  {
+    __ SetAccumulator(var_result.value());
+    __ Dispatch();
+  }
+}
+
+// BitwiseOr <imm>
+//
+// BitwiseOr accumulator with <imm>.
+void InterpreterGenerator::DoBitwiseOrSmi(InterpreterAssembler* assembler) {
+  Node* left = __ GetAccumulator();
+  Node* right = __ BytecodeOperandImmSmi(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
   Variable var_lhs_type_feedback(assembler,
                                  MachineRepresentation::kTaggedSigned);
   Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
@@ -1590,17 +1714,41 @@ void InterpreterGenerator::DoBitwiseOrSmi(InterpreterAssembler* assembler) {
   __ Dispatch();
 }
 
-// BitwiseAnd <imm> <reg>
+// BitwiseXor <imm>
 //
-// BitwiseAnd <reg> with <imm>. For this operation <reg> is the lhs
-// operand and <imm> is the rhs operand.
-void InterpreterGenerator::DoBitwiseAndSmi(InterpreterAssembler* assembler) {
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+// BitwiseXor accumulator with <imm>.
+void InterpreterGenerator::DoBitwiseXorSmi(InterpreterAssembler* assembler) {
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* context = __ GetContext();
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
+  Variable var_lhs_type_feedback(assembler,
+                                 MachineRepresentation::kTaggedSigned);
+  Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
+      context, left, &var_lhs_type_feedback);
+  Node* rhs_value = __ SmiToWord32(right);
+  Node* value = __ Word32Xor(lhs_value, rhs_value);
+  Node* result = __ ChangeInt32ToTagged(value);
+  Node* result_type = __ SelectSmiConstant(
+      __ TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
+      BinaryOperationFeedback::kNumber);
+  __ UpdateFeedback(__ SmiOr(result_type, var_lhs_type_feedback.value()),
+                    feedback_vector, slot_index);
+  __ SetAccumulator(result);
+  __ Dispatch();
+}
+// BitwiseAnd <imm>
+//
+// BitwiseAnd accumulator with <imm>.
+void InterpreterGenerator::DoBitwiseAndSmi(InterpreterAssembler* assembler) {
+  Node* left = __ GetAccumulator();
+  Node* right = __ BytecodeOperandImmSmi(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
   Variable var_lhs_type_feedback(assembler,
                                  MachineRepresentation::kTaggedSigned);
   Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
@@ -1617,18 +1765,18 @@ void InterpreterGenerator::DoBitwiseAndSmi(InterpreterAssembler* assembler) {
   __ Dispatch();
 }
 
-// ShiftLeftSmi <imm> <reg>
+// ShiftLeftSmi <imm>
 //
-// Left shifts register <src> by the count specified in <imm>.
-// Register <src> is converted to an int32 before the operation. The 5
+// Left shifts accumulator by the count specified in <imm>.
+// The accumulator is converted to an int32 before the operation. The 5
 // lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
 void InterpreterGenerator::DoShiftLeftSmi(InterpreterAssembler* assembler) {
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* context = __ GetContext();
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
   Variable var_lhs_type_feedback(assembler,
                                  MachineRepresentation::kTaggedSigned);
   Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
@@ -1646,18 +1794,18 @@ void InterpreterGenerator::DoShiftLeftSmi(InterpreterAssembler* assembler) {
   __ Dispatch();
 }
 
-// ShiftRightSmi <imm> <reg>
+// ShiftRightSmi <imm>
 //
-// Right shifts register <src> by the count specified in <imm>.
-// Register <src> is converted to an int32 before the operation. The 5
-// lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
+// Right shifts accumulator by the count specified in <imm>. Result is sign
+// extended. The accumulator is converted to an int32 before the operation. The
+// 5 lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
 void InterpreterGenerator::DoShiftRightSmi(InterpreterAssembler* assembler) {
-  Node* reg_index = __ BytecodeOperandReg(1);
-  Node* left = __ LoadRegister(reg_index);
+  Node* left = __ GetAccumulator();
   Node* right = __ BytecodeOperandImmSmi(0);
-  Node* context = __ GetContext();
-  Node* slot_index = __ BytecodeOperandIdx(2);
+  Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
   Variable var_lhs_type_feedback(assembler,
                                  MachineRepresentation::kTaggedSigned);
   Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
@@ -1666,6 +1814,36 @@ void InterpreterGenerator::DoShiftRightSmi(InterpreterAssembler* assembler) {
   Node* shift_count = __ Word32And(rhs_value, __ Int32Constant(0x1f));
   Node* value = __ Word32Sar(lhs_value, shift_count);
   Node* result = __ ChangeInt32ToTagged(value);
+  Node* result_type = __ SelectSmiConstant(
+      __ TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
+      BinaryOperationFeedback::kNumber);
+  __ UpdateFeedback(__ SmiOr(result_type, var_lhs_type_feedback.value()),
+                    feedback_vector, slot_index);
+  __ SetAccumulator(result);
+  __ Dispatch();
+}
+
+// ShiftRightLogicalSmi <imm>
+//
+// Right shifts accumulator by the count specified in <imm>. Result is zero
+// extended. The accumulator is converted to an int32 before the operation. The
+// 5 lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
+void InterpreterGenerator::DoShiftRightLogicalSmi(
+    InterpreterAssembler* assembler) {
+  Node* left = __ GetAccumulator();
+  Node* right = __ BytecodeOperandImmSmi(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* feedback_vector = __ LoadFeedbackVector();
+  Node* context = __ GetContext();
+
+  Variable var_lhs_type_feedback(assembler,
+                                 MachineRepresentation::kTaggedSigned);
+  Node* lhs_value = __ TruncateTaggedToWord32WithFeedback(
+      context, left, &var_lhs_type_feedback);
+  Node* rhs_value = __ SmiToWord32(right);
+  Node* shift_count = __ Word32And(rhs_value, __ Int32Constant(0x1f));
+  Node* value = __ Word32Shr(lhs_value, shift_count);
+  Node* result = __ ChangeUint32ToTagged(value);
   Node* result_type = __ SelectSmiConstant(
       __ TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
       BinaryOperationFeedback::kNumber);
@@ -2146,50 +2324,78 @@ void InterpreterGenerator::DoGetSuperConstructor(
 }
 
 void InterpreterGenerator::DoJSCall(InterpreterAssembler* assembler,
+                                    ConvertReceiverMode receiver_mode,
                                     TailCallMode tail_call_mode) {
   Node* function_reg = __ BytecodeOperandReg(0);
   Node* function = __ LoadRegister(function_reg);
-  Node* receiver_reg = __ BytecodeOperandReg(1);
-  Node* receiver_arg = __ RegisterLocation(receiver_reg);
-  Node* receiver_args_count = __ BytecodeOperandCount(2);
-  Node* receiver_count = __ Int32Constant(1);
-  Node* args_count = __ Int32Sub(receiver_args_count, receiver_count);
+  Node* first_arg_reg = __ BytecodeOperandReg(1);
+  Node* first_arg = __ RegisterLocation(first_arg_reg);
+  Node* arg_list_count = __ BytecodeOperandCount(2);
+  Node* args_count;
+  if (receiver_mode == ConvertReceiverMode::kNullOrUndefined) {
+    // The receiver is implied, so it is not in the argument list.
+    args_count = arg_list_count;
+  } else {
+    // Subtract the receiver from the argument count.
+    Node* receiver_count = __ Int32Constant(1);
+    args_count = __ Int32Sub(arg_list_count, receiver_count);
+  }
   Node* slot_id = __ BytecodeOperandIdx(3);
   Node* feedback_vector = __ LoadFeedbackVector();
   Node* context = __ GetContext();
   Node* result =
-      __ CallJSWithFeedback(function, context, receiver_arg, args_count,
-                            slot_id, feedback_vector, tail_call_mode);
+      __ CallJSWithFeedback(function, context, first_arg, args_count, slot_id,
+                            feedback_vector, receiver_mode, tail_call_mode);
   __ SetAccumulator(result);
   __ Dispatch();
 }
 
 void InterpreterGenerator::DoJSCallN(InterpreterAssembler* assembler,
-                                     int arg_count) {
-  const int kReceiverOperandIndex = 1;
-  const int kReceiverOperandCount = 1;
+                                     int arg_count,
+                                     ConvertReceiverMode receiver_mode) {
+  // Indices and counts of operands on the bytecode.
+  const int kFirstArgumentOperandIndex = 1;
+  const int kReceiverOperandCount =
+      (receiver_mode == ConvertReceiverMode::kNullOrUndefined) ? 0 : 1;
   const int kSlotOperandIndex =
-      kReceiverOperandIndex + kReceiverOperandCount + arg_count;
-  const int kBoilerplatParameterCount = 7;
+      kFirstArgumentOperandIndex + kReceiverOperandCount + arg_count;
+  // Indices and counts of parameters to the call stub.
+  const int kBoilerplateParameterCount = 7;
   const int kReceiverParameterIndex = 5;
+  const int kReceiverParameterCount = 1;
+  // Only used in a DCHECK.
+  USE(kReceiverParameterCount);
 
   Node* function_reg = __ BytecodeOperandReg(0);
   Node* function = __ LoadRegister(function_reg);
-  std::array<Node*, Bytecodes::kMaxOperands + kBoilerplatParameterCount> temp;
+  std::array<Node*, Bytecodes::kMaxOperands + kBoilerplateParameterCount> temp;
   Callable call_ic = CodeFactory::CallIC(isolate_);
   temp[0] = __ HeapConstant(call_ic.code());
   temp[1] = function;
   temp[2] = __ Int32Constant(arg_count);
   temp[3] = __ BytecodeOperandIdxInt32(kSlotOperandIndex);
   temp[4] = __ LoadFeedbackVector();
-  for (int i = 0; i < (arg_count + kReceiverOperandCount); ++i) {
-    Node* reg = __ BytecodeOperandReg(i + kReceiverOperandIndex);
-    temp[kReceiverParameterIndex + i] = __ LoadRegister(reg);
+
+  int parameter_index = kReceiverParameterIndex;
+  if (receiver_mode == ConvertReceiverMode::kNullOrUndefined) {
+    // The first argument parameter (the receiver) is implied to be undefined.
+    Node* undefined_value =
+        __ HeapConstant(isolate_->factory()->undefined_value());
+    temp[parameter_index++] = undefined_value;
   }
-  temp[kReceiverParameterIndex + arg_count + kReceiverOperandCount] =
-      __ GetContext();
+  // The bytecode argument operands are copied into the remaining argument
+  // parameters.
+  for (int i = 0; i < (kReceiverOperandCount + arg_count); ++i) {
+    Node* reg = __ BytecodeOperandReg(kFirstArgumentOperandIndex + i);
+    temp[parameter_index++] = __ LoadRegister(reg);
+  }
+
+  DCHECK_EQ(parameter_index,
+            kReceiverParameterIndex + kReceiverParameterCount + arg_count);
+  temp[parameter_index] = __ GetContext();
+
   Node* result = __ CallStubN(call_ic.descriptor(), 1,
-                              arg_count + kBoilerplatParameterCount, &temp[0]);
+                              arg_count + kBoilerplateParameterCount, &temp[0]);
   __ SetAccumulator(result);
   __ Dispatch();
 }
@@ -2199,40 +2405,46 @@ void InterpreterGenerator::DoJSCallN(InterpreterAssembler* assembler,
 // Call a JSfunction or Callable in |callable| with the |receiver| and
 // |arg_count| arguments in subsequent registers. Collect type feedback
 // into |feedback_slot_id|
-void InterpreterGenerator::DoCall(InterpreterAssembler* assembler) {
-  DoJSCall(assembler, TailCallMode::kDisallow);
-}
-
-void InterpreterGenerator::DoCall0(InterpreterAssembler* assembler) {
-  DoJSCallN(assembler, 0);
-}
-
-void InterpreterGenerator::DoCall1(InterpreterAssembler* assembler) {
-  DoJSCallN(assembler, 1);
-}
-
-void InterpreterGenerator::DoCall2(InterpreterAssembler* assembler) {
-  DoJSCallN(assembler, 2);
+void InterpreterGenerator::DoCallAnyReceiver(InterpreterAssembler* assembler) {
+  DoJSCall(assembler, ConvertReceiverMode::kAny, TailCallMode::kDisallow);
 }
 
 void InterpreterGenerator::DoCallProperty(InterpreterAssembler* assembler) {
-  // Same as Call
-  UNREACHABLE();
+  DoJSCall(assembler, ConvertReceiverMode::kNotNullOrUndefined,
+           TailCallMode::kDisallow);
 }
 
 void InterpreterGenerator::DoCallProperty0(InterpreterAssembler* assembler) {
-  // Same as Call0
-  UNREACHABLE();
+  DoJSCallN(assembler, 0, ConvertReceiverMode::kNotNullOrUndefined);
 }
 
 void InterpreterGenerator::DoCallProperty1(InterpreterAssembler* assembler) {
-  // Same as Call1
-  UNREACHABLE();
+  DoJSCallN(assembler, 1, ConvertReceiverMode::kNotNullOrUndefined);
 }
 
 void InterpreterGenerator::DoCallProperty2(InterpreterAssembler* assembler) {
-  // Same as Call2
-  UNREACHABLE();
+  DoJSCallN(assembler, 2, ConvertReceiverMode::kNotNullOrUndefined);
+}
+
+void InterpreterGenerator::DoCallUndefinedReceiver(
+    InterpreterAssembler* assembler) {
+  DoJSCall(assembler, ConvertReceiverMode::kNullOrUndefined,
+           TailCallMode::kDisallow);
+}
+
+void InterpreterGenerator::DoCallUndefinedReceiver0(
+    InterpreterAssembler* assembler) {
+  DoJSCallN(assembler, 0, ConvertReceiverMode::kNullOrUndefined);
+}
+
+void InterpreterGenerator::DoCallUndefinedReceiver1(
+    InterpreterAssembler* assembler) {
+  DoJSCallN(assembler, 1, ConvertReceiverMode::kNullOrUndefined);
+}
+
+void InterpreterGenerator::DoCallUndefinedReceiver2(
+    InterpreterAssembler* assembler) {
+  DoJSCallN(assembler, 2, ConvertReceiverMode::kNullOrUndefined);
 }
 
 // TailCall <callable> <receiver> <arg_count> <feedback_slot_id>
@@ -2241,7 +2453,7 @@ void InterpreterGenerator::DoCallProperty2(InterpreterAssembler* assembler) {
 // |arg_count| arguments in subsequent registers. Collect type feedback
 // into |feedback_slot_id|
 void InterpreterGenerator::DoTailCall(InterpreterAssembler* assembler) {
-  DoJSCall(assembler, TailCallMode::kAllow);
+  DoJSCall(assembler, ConvertReceiverMode::kAny, TailCallMode::kAllow);
 }
 
 // CallRuntime <function_id> <first_arg> <arg_count>
@@ -2321,7 +2533,7 @@ void InterpreterGenerator::DoCallJSRuntime(InterpreterAssembler* assembler) {
 
   // Call the function.
   Node* result = __ CallJS(function, context, first_arg, args_count,
-                           TailCallMode::kDisallow);
+                           ConvertReceiverMode::kAny, TailCallMode::kDisallow);
   __ SetAccumulator(result);
   __ Dispatch();
 }

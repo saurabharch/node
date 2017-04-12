@@ -117,7 +117,6 @@
 ['arch == arm64', {
 
   'test-cpu-profiler/CollectDeoptEvents': [PASS, FAIL],
-  'test-cpu-profiler/CollectOptimizedToplevelProfile': [PASS, FAIL],
 
   'test-api/Bug618': [PASS],
 
@@ -198,6 +197,10 @@
   'test-api/ExternalWrap': [PASS, SLOW],
   'test-api/FastReturnValues*': [PASS, SLOW],
   'test-decls/CrossScriptReferences_Simple2': [PASS, SLOW],
+  # "WithWarmup" means starting from a snapshot, for which nosnap builds lack
+  # support.
+  'test-serialize/CustomSnapshotDataBlobWithWarmup': [SKIP],
+  'test-serialize/SnapshotDataBlobWithWarmup': [SKIP],
 }],  # 'no_snap == True'
 ['no_snap == False', {
   # FunctionEntryHooks require bootstrapping from scratch.

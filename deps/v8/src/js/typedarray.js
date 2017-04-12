@@ -113,7 +113,12 @@ function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2, conservative) {
 
 macro TYPED_ARRAY_CONSTRUCTOR(NAME, ELEMENT_SIZE)
 function NAMEConstructByIterable(obj, iterable, iteratorFn) {
-  if (%has_iteration_side_effects(iterable)) {
+  if (%IterableToListCanBeElided(iterable)) {
+    // This .length access is unobservable, because it being observable would
+    // mean that iteration has side effects, and we wouldn't reach this path.
+    %typed_array_construct_by_array_like(
+        obj, iterable, iterable.length, ELEMENT_SIZE);
+  } else {
     var list = new InternalArray();
     // Reading the Symbol.iterator property of iterable twice would be
     // observable with getters, so instead, we call the function which
@@ -131,11 +136,6 @@ function NAMEConstructByIterable(obj, iterable, iteratorFn) {
       list.push(value);
     }
     %typed_array_construct_by_array_like(obj, list, list.length, ELEMENT_SIZE);
-  } else {
-    // This .length access is unobservable, because it being observable would
-    // mean that iteration has side effects, and we wouldn't reach this path.
-    %typed_array_construct_by_array_like(
-        obj, iterable, iterable.length, ELEMENT_SIZE);
   }
 }
 
@@ -147,7 +147,12 @@ function NAMEConstructByTypedArray(obj, typedArray) {
   var byteLength = %_ArrayBufferViewGetByteLength(typedArray);
   var newByteLength = length * ELEMENT_SIZE;
   %typed_array_construct_by_array_like(obj, typedArray, length, ELEMENT_SIZE);
-  var bufferConstructor = SpeciesConstructor(srcData, GlobalArrayBuffer);
+  // The spec requires that constructing a typed array using a SAB-backed typed
+  // array use the ArrayBuffer constructor, not the species constructor. See
+  // https://tc39.github.io/ecma262/#sec-typedarray-typedarray.
+  var bufferConstructor = IS_SHAREDARRAYBUFFER(srcData)
+                            ? GlobalArrayBuffer
+                            : SpeciesConstructor(srcData, GlobalArrayBuffer);
   var prototype = bufferConstructor.prototype;
   // TODO(littledan): Use the right prototype based on bufferConstructor's realm
   if (IS_RECEIVER(prototype) && prototype !== GlobalArrayBufferPrototype) {

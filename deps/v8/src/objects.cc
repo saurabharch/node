@@ -2360,11 +2360,12 @@ MUST_USE_RESULT MaybeHandle<Object> Object::SpeciesConstructor(
 bool Object::IterationHasObservableEffects() {
   // Check that this object is an array.
   if (!IsJSArray()) return true;
-  JSArray* spread_array = JSArray::cast(this);
-  Isolate* isolate = spread_array->GetIsolate();
+  JSArray* array = JSArray::cast(this);
+  Isolate* isolate = array->GetIsolate();
 
   // Check that we have the original ArrayPrototype.
-  JSObject* array_proto = JSObject::cast(spread_array->map()->prototype());
+  if (!array->map()->prototype()->IsJSObject()) return true;
+  JSObject* array_proto = JSObject::cast(array->map()->prototype());
   if (!isolate->is_initial_array_prototype(array_proto)) return true;
 
   // Check that the ArrayPrototype hasn't been modified in a way that would
@@ -2379,7 +2380,7 @@ bool Object::IterationHasObservableEffects() {
 
   // For FastPacked kinds, iteration will have the same effect as simply
   // accessing each property in order.
-  ElementsKind array_kind = spread_array->GetElementsKind();
+  ElementsKind array_kind = array->GetElementsKind();
   if (IsFastPackedElementsKind(array_kind)) return false;
 
   // For FastHoley kinds, an element access on a hole would cause a lookup on
@@ -11529,6 +11530,8 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
         break;
       }
       case '<': {  // $<name> - named capture
+        typedef String::Match::CaptureState CaptureState;
+
         if (!match->HasNamedCaptures()) {
           builder.AppendCharacter('$');
           continue_from_ix = peek_ix;
@@ -11550,12 +11553,27 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
 
         Handle<String> capture_name =
             factory->NewSubString(replacement, peek_ix + 1, closing_bracket_ix);
-        bool capture_exists;
         Handle<String> capture;
+        CaptureState capture_state;
         ASSIGN_RETURN_ON_EXCEPTION(
             isolate, capture,
-            match->GetNamedCapture(capture_name, &capture_exists), String);
-        if (capture_exists) builder.AppendString(capture);
+            match->GetNamedCapture(capture_name, &capture_state), String);
+
+        switch (capture_state) {
+          case CaptureState::INVALID:
+            THROW_NEW_ERROR(
+                isolate,
+                NewSyntaxError(MessageTemplate::kRegExpInvalidReplaceString,
+                               replacement),
+                String);
+            break;
+          case CaptureState::UNMATCHED:
+            break;
+          case CaptureState::MATCHED:
+            builder.AppendString(capture);
+            break;
+        }
+
         continue_from_ix = closing_bracket_ix + 1;
         break;
       }
@@ -12818,10 +12836,6 @@ void JSFunction::EnsureHasInitialMap(Handle<JSFunction> function) {
   if (function->has_initial_map()) return;
   Isolate* isolate = function->GetIsolate();
 
-  // The constructor should be compiled for the optimization hints to be
-  // available.
-  Compiler::Compile(function, Compiler::CLEAR_EXCEPTION);
-
   // First create a new map with the size and number of in-object properties
   // suggested by the function.
   InstanceType instance_type;
@@ -12832,10 +12846,20 @@ void JSFunction::EnsureHasInitialMap(Handle<JSFunction> function) {
   } else {
     instance_type = JS_OBJECT_TYPE;
   }
+
+  // The constructor should be compiled for the optimization hints to be
+  // available.
+  int expected_nof_properties = 0;
+  if (function->shared()->is_compiled() ||
+      Compiler::Compile(function, Compiler::CLEAR_EXCEPTION)) {
+    DCHECK(function->shared()->is_compiled());
+    expected_nof_properties = function->shared()->expected_nof_properties();
+  }
+
   int instance_size;
   int in_object_properties;
-  function->CalculateInstanceSize(instance_type, 0, &instance_size,
-                                  &in_object_properties);
+  CalculateInstanceSizeHelper(instance_type, 0, expected_nof_properties,
+                              &instance_size, &in_object_properties);
 
   Handle<Map> map = isolate->factory()->NewMap(instance_type, instance_size);
 
@@ -13099,7 +13123,12 @@ void Oddball::Initialize(Isolate* isolate, Handle<Oddball> oddball,
       isolate->factory()->InternalizeUtf8String(to_string);
   Handle<String> internalized_type_of =
       isolate->factory()->InternalizeUtf8String(type_of);
-  oddball->set_to_number_raw(to_number->Number());
+  if (to_number->IsHeapNumber()) {
+    oddball->set_to_number_raw_as_bits(
+        Handle<HeapNumber>::cast(to_number)->value_as_bits());
+  } else {
+    oddball->set_to_number_raw(to_number->Number());
+  }
   oddball->set_to_number(*to_number);
   oddball->set_to_string(*internalized_to_string);
   oddball->set_type_of(*internalized_type_of);
@@ -13585,16 +13614,6 @@ void JSFunction::CalculateInstanceSizeHelper(InstanceType instance_type,
           JSObject::kMaxInstanceSize);
   *in_object_properties = ((*instance_size - header_size) >> kPointerSizeLog2) -
                           requested_embedder_fields;
-}
-
-void JSFunction::CalculateInstanceSize(InstanceType instance_type,
-                                       int requested_embedder_fields,
-                                       int* instance_size,
-                                       int* in_object_properties) {
-  DCHECK(shared()->is_compiled());
-  CalculateInstanceSizeHelper(instance_type, requested_embedder_fields,
-                              shared()->expected_nof_properties(),
-                              instance_size, in_object_properties);
 }
 
 void JSFunction::CalculateInstanceSizeForDerivedClass(

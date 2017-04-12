@@ -2564,6 +2564,7 @@ class JSObject: public JSReceiver {
   STATIC_ASSERT(kHeaderSize == Internals::kJSObjectHeaderSize);
 
   class BodyDescriptor;
+  class FastBodyDescriptor;
 
   // Gets the number of currently used elements.
   int GetFastElementsUsage();
@@ -5712,11 +5713,16 @@ class Script: public Struct {
   V(WeakSet.prototype, delete, WeakSetDelete)               \
   V(WeakSet.prototype, has, WeakSetHas)
 
-#define ATOMIC_FUNCTIONS_WITH_ID_LIST(V) \
-  V(Atomics, load, AtomicsLoad)          \
-  V(Atomics, store, AtomicsStore)        \
-  V(Atomics, exchange, AtomicsExchange)  \
-  V(Atomics, compareExchange, AtomicsCompareExchange)
+#define ATOMIC_FUNCTIONS_WITH_ID_LIST(V)              \
+  V(Atomics, load, AtomicsLoad)                       \
+  V(Atomics, store, AtomicsStore)                     \
+  V(Atomics, exchange, AtomicsExchange)               \
+  V(Atomics, compareExchange, AtomicsCompareExchange) \
+  V(Atomics, add, AtomicsAdd)                         \
+  V(Atomics, sub, AtomicsSub)                         \
+  V(Atomics, and, AtomicsAnd)                         \
+  V(Atomics, or, AtomicsOr)                           \
+  V(Atomics, xor, AtomicsXor)
 
 enum BuiltinFunctionId {
   kArrayCode,
@@ -6688,6 +6694,10 @@ class Module : public Struct {
   static Handle<JSModuleNamespace> GetModuleNamespace(Handle<Module> module,
                                                       int module_request);
 
+  // Get the namespace object for [module].  If it doesn't exist yet, it is
+  // created.
+  static Handle<JSModuleNamespace> GetModuleNamespace(Handle<Module> module);
+
   static const int kCodeOffset = HeapObject::kHeaderSize;
   static const int kExportsOffset = kCodeOffset + kPointerSize;
   static const int kRegularExportsOffset = kExportsOffset + kPointerSize;
@@ -6704,10 +6714,6 @@ class Module : public Struct {
                            Handle<FixedArray> names);
   static void CreateIndirectExport(Handle<Module> module, Handle<String> name,
                                    Handle<ModuleInfoEntry> entry);
-
-  // Get the namespace object for [module].  If it doesn't exist yet, it is
-  // created.
-  static Handle<JSModuleNamespace> GetModuleNamespace(Handle<Module> module);
 
   // The [must_resolve] argument indicates whether or not an exception should be
   // thrown in case the module does not provide an export named [name]
@@ -6912,9 +6918,6 @@ class JSFunction: public JSObject {
   DECLARE_CAST(JSFunction)
 
   // Calculate the instance size and in-object properties count.
-  void CalculateInstanceSize(InstanceType instance_type,
-                             int requested_embedder_fields, int* instance_size,
-                             int* in_object_properties);
   static void CalculateInstanceSizeForDerivedClass(
       Handle<JSFunction> function, InstanceType instance_type,
       int requested_embedder_fields, int* instance_size,
@@ -8183,11 +8186,15 @@ class String: public Name {
     virtual Handle<String> GetPrefix() = 0;
     virtual Handle<String> GetSuffix() = 0;
 
+    // A named capture can be invalid (if it is not specified in the pattern),
+    // unmatched (specified but not matched in the current string), and matched.
+    enum CaptureState { INVALID, UNMATCHED, MATCHED };
+
     virtual int CaptureCount() = 0;
     virtual bool HasNamedCaptures() = 0;
     virtual MaybeHandle<String> GetCapture(int i, bool* capture_exists) = 0;
     virtual MaybeHandle<String> GetNamedCapture(Handle<String> name,
-                                                bool* capture_exists) = 0;
+                                                CaptureState* state) = 0;
 
     virtual ~Match() {}
   };
@@ -8832,6 +8839,7 @@ class Oddball: public HeapObject {
   // [to_number_raw]: Cached raw to_number computed at startup.
   inline double to_number_raw() const;
   inline void set_to_number_raw(double value);
+  inline void set_to_number_raw_as_bits(uint64_t bits);
 
   // [to_string]: Cached to_string computed at startup.
   DECL_ACCESSORS(to_string, String)
@@ -10107,6 +10115,7 @@ class StackFrameInfo : public Struct {
   DECL_ACCESSORS(function_name, Object)
   DECL_BOOLEAN_ACCESSORS(is_eval)
   DECL_BOOLEAN_ACCESSORS(is_constructor)
+  DECL_BOOLEAN_ACCESSORS(is_wasm)
   DECL_INT_ACCESSORS(flag)
 
   DECLARE_CAST(StackFrameInfo)
@@ -10130,6 +10139,7 @@ class StackFrameInfo : public Struct {
   // Bit position in the flag, from least significant bit position.
   static const int kIsEvalBit = 0;
   static const int kIsConstructorBit = 1;
+  static const int kIsWasmBit = 2;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(StackFrameInfo);
 };
@@ -10197,12 +10207,6 @@ class ObjectVisitor BASE_EMBEDDED {
   // Visits a runtime entry in the instruction stream.
   virtual void VisitRuntimeEntry(RelocInfo* rinfo) {}
 
-  // Visits the resource of an one-byte or two-byte string.
-  virtual void VisitExternalOneByteString(
-      v8::String::ExternalOneByteStringResource** resource) {}
-  virtual void VisitExternalTwoByteString(
-      v8::String::ExternalStringResource** resource) {}
-
   // Visits a debug call target in the instruction stream.
   virtual void VisitDebugTarget(RelocInfo* rinfo);
 
@@ -10221,9 +10225,6 @@ class ObjectVisitor BASE_EMBEDDED {
 
   // Visits an (encoded) internal reference.
   virtual void VisitInternalReference(RelocInfo* rinfo) {}
-
-  // Visits a handle that has an embedder-assigned class ID.
-  virtual void VisitEmbedderReference(Object** p, uint16_t class_id) {}
 
   // Intended for serialization/deserialization checking: insert, or
   // check for the presence of, a tag at this position in the stream.

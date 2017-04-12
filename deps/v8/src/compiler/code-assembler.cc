@@ -516,10 +516,18 @@ Node* CodeAssembler::AtomicStore(MachineRepresentation rep, Node* base,
   return raw_assembler()->AtomicStore(rep, base, offset, value);
 }
 
-Node* CodeAssembler::AtomicExchange(MachineType type, Node* base, Node* offset,
-                                    Node* value) {
-  return raw_assembler()->AtomicExchange(type, base, offset, value);
-}
+#define ATOMIC_FUNCTION(name)                                        \
+  Node* CodeAssembler::Atomic##name(MachineType type, Node* base,    \
+                                    Node* offset, Node* value) {     \
+    return raw_assembler()->Atomic##name(type, base, offset, value); \
+  }
+ATOMIC_FUNCTION(Exchange);
+ATOMIC_FUNCTION(Add);
+ATOMIC_FUNCTION(Sub);
+ATOMIC_FUNCTION(And);
+ATOMIC_FUNCTION(Or);
+ATOMIC_FUNCTION(Xor);
+#undef ATOMIC_FUNCTION
 
 Node* CodeAssembler::AtomicCompareExchange(MachineType type, Node* base,
                                            Node* offset, Node* old_value,
@@ -756,6 +764,17 @@ void CodeAssembler::Switch(Node* index, Label* default_label,
   }
   return raw_assembler()->Switch(index, default_label->label_, case_values,
                                  labels, case_count);
+}
+
+bool CodeAssembler::UnalignedLoadSupported(const MachineType& machineType,
+                                           uint8_t alignment) const {
+  return raw_assembler()->machine()->UnalignedLoadSupported(machineType,
+                                                            alignment);
+}
+bool CodeAssembler::UnalignedStoreSupported(const MachineType& machineType,
+                                            uint8_t alignment) const {
+  return raw_assembler()->machine()->UnalignedStoreSupported(machineType,
+                                                             alignment);
 }
 
 // RawMachineAssembler delegate helpers:

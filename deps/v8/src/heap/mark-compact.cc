@@ -15,6 +15,7 @@
 #include "src/gdb-jit.h"
 #include "src/global-handles.h"
 #include "src/heap/array-buffer-tracker.h"
+#include "src/heap/concurrent-marking.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/incremental-marking.h"
 #include "src/heap/mark-compact-inl.h"
@@ -846,6 +847,8 @@ void MarkCompactCollector::Prepare() {
   // If concurrent unmapping tasks are still running, we should wait for
   // them here.
   heap()->memory_allocator()->unmapper()->WaitUntilCompleted();
+
+  heap()->concurrent_marking()->EnsureTaskCompleted();
 
   // Clear marking bits if incremental marking is aborted.
   if (was_marked_incrementally_ && heap_->ShouldAbortIncrementalMarking()) {
@@ -1679,12 +1682,7 @@ class RecordMigratedSlotVisitor final : public ObjectVisitor {
   inline void VisitExternalReference(RelocInfo* rinfo) final {}
   inline void VisitExternalReference(Address* p) final {}
   inline void VisitRuntimeEntry(RelocInfo* rinfo) final {}
-  inline void VisitExternalOneByteString(
-      v8::String::ExternalOneByteStringResource** resource) final {}
-  inline void VisitExternalTwoByteString(
-      v8::String::ExternalStringResource** resource) final {}
   inline void VisitInternalReference(RelocInfo* rinfo) final {}
-  inline void VisitEmbedderReference(Object** p, uint16_t class_id) final {}
 
  private:
   inline void RecordMigratedSlot(Object* value, Address slot) {

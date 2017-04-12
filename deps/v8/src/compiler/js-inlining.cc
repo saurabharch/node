@@ -312,8 +312,12 @@ bool NeedsConvertReceiver(Node* receiver, Node* effect) {
       return false;
     }
     default: {
+      // We don't really care about the exact maps here, just the instance
+      // types, which don't change across potential side-effecting operations.
       ZoneHandleSet<Map> maps;
-      if (NodeProperties::InferReceiverMaps(receiver, effect, &maps)) {
+      NodeProperties::InferReceiverMapsResult result =
+          NodeProperties::InferReceiverMaps(receiver, effect, &maps);
+      if (result != NodeProperties::kNoReceiverMaps) {
         // Check if all {maps} are actually JSReceiver maps.
         for (size_t i = 0; i < maps.size(); ++i) {
           if (!maps[i]->IsJSReceiverMap()) return true;
@@ -478,6 +482,20 @@ Reduction JSInliner::ReduceJSCall(Node* node) {
     TRACE("Not inlining %s into %s because constructor is not constructable.\n",
           shared_info->DebugName()->ToCString().get(),
           info_->shared_info()->DebugName()->ToCString().get());
+    return NoChange();
+  }
+
+  // TODO(6180): Don't inline class constructors for now, as the
+  // inlining logic doesn't deal properly with class constructors
+  // that return a primitive.
+  if (FLAG_harmony_restrict_constructor_return &&
+      node->opcode() == IrOpcode::kJSConstruct &&
+      IsClassConstructor(shared_info->kind())) {
+    TRACE(
+        "Not inlining %s into %s because class constructor inlining is"
+        "not supported.\n",
+        shared_info->DebugName()->ToCString().get(),
+        info_->shared_info()->DebugName()->ToCString().get());
     return NoChange();
   }
 

@@ -238,14 +238,35 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Pop the current context and replace with |context|.
   BytecodeArrayBuilder& PopContext(Register context);
 
-  // Call a JS function. The JSFunction or Callable to be called should be in
-  // |callable|. The arguments should be in |args|, with the receiver in
-  // |args[0]|. The call type of the expression is in |call_type|. Type feedback
-  // is recorded in the |feedback_slot| in the type feedback vector.
-  BytecodeArrayBuilder& Call(
-      Register callable, RegisterList args, int feedback_slot,
-      Call::CallType call_type,
-      TailCallMode tail_call_mode = TailCallMode::kDisallow);
+  // Call a JS function which is known to be a property of a JS object. The
+  // JSFunction or Callable to be called should be in |callable|. The arguments
+  // should be in |args|, with the receiver in |args[0]|. The call type of the
+  // expression is in |call_type|. Type feedback is recorded in the
+  // |feedback_slot| in the type feedback vector.
+  BytecodeArrayBuilder& CallProperty(Register callable, RegisterList args,
+                                     int feedback_slot);
+
+  // Call a JS function with an known undefined receiver. The JSFunction or
+  // Callable to be called should be in |callable|. The arguments should be in
+  // |args|, with no receiver as it is implicitly set to undefined. Type
+  // feedback is recorded in the |feedback_slot| in the type feedback vector.
+  BytecodeArrayBuilder& CallUndefinedReceiver(Register callable,
+                                              RegisterList args,
+                                              int feedback_slot);
+
+  // Call a JS function with an any receiver, possibly (but not necessarily)
+  // undefined. The JSFunction or Callable to be called should be in |callable|.
+  // The arguments should be in |args|, with the receiver in |args[0]|. Type
+  // feedback is recorded in the |feedback_slot| in the type feedback vector.
+  BytecodeArrayBuilder& CallAnyReceiver(Register callable, RegisterList args,
+                                        int feedback_slot);
+
+  // Tail call into a JS function. The JSFunction or Callable to be called
+  // should be in |callable|. The arguments should be in |args|, with the
+  // receiver in |args[0]|. Type feedback is recorded in the |feedback_slot| in
+  // the type feedback vector.
+  BytecodeArrayBuilder& TailCall(Register callable, RegisterList args,
+                                 int feedback_slot);
 
   // Call a JS function. The JSFunction or Callable to be called should be in
   // |callable|, the receiver in |args[0]| and the arguments in |args[1]|
@@ -292,6 +313,9 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Type feedback will be recorded in the |feedback_slot|
   BytecodeArrayBuilder& BinaryOperation(Token::Value binop, Register reg,
                                         int feedback_slot);
+  BytecodeArrayBuilder& BinaryOperationSmiLiteral(Token::Value binop,
+                                                  Smi* literal,
+                                                  int feedback_slot);
 
   // Count Operators (value stored in accumulator).
   // Type feedback will be recorded in the |feedback_slot|
@@ -431,6 +455,12 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   uint32_t GetInputRegisterListOperand(RegisterList reg_list);
   uint32_t GetOutputRegisterListOperand(RegisterList reg_list);
 
+  // Outputs raw register transfer bytecodes without going through the register
+  // optimizer.
+  void OutputLdarRaw(Register reg);
+  void OutputStarRaw(Register reg);
+  void OutputMovRaw(Register src, Register dest);
+
   // Accessors
   BytecodeRegisterAllocator* register_allocator() {
     return &register_allocator_;
@@ -466,6 +496,17 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
 
   // Set position for return.
   void SetReturnPosition();
+
+  // Sets a deferred source info which should be emitted before any future
+  // source info (either attached to a following bytecode or as a nop).
+  void SetDeferredSourceInfo(BytecodeSourceInfo source_info);
+  // Either attach deferred source info to node, or emit it as a nop bytecode
+  // if node already have valid source info.
+  void AttachOrEmitDeferredSourceInfo(BytecodeNode* node);
+
+  // Write bytecode to bytecode array.
+  void Write(BytecodeNode* node);
+  void WriteJump(BytecodeNode* node, BytecodeLabel* label);
 
   // Not implemented as the illegal bytecode is used inside internally
   // to indicate a bytecode field is not valid or an error has occured
@@ -506,6 +547,7 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   BytecodePipelineStage* pipeline_;
   BytecodeRegisterOptimizer* register_optimizer_;
   BytecodeSourceInfo latest_source_info_;
+  BytecodeSourceInfo deferred_source_info_;
 
   static int const kNoFeedbackSlot = 0;
 

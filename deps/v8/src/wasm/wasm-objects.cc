@@ -70,30 +70,6 @@ using namespace v8::internal::wasm;
 
 namespace {
 
-uint32_t SafeUint32(Object* value) {
-  if (value->IsSmi()) {
-    int32_t val = Smi::cast(value)->value();
-    CHECK_GE(val, 0);
-    return static_cast<uint32_t>(val);
-  }
-  DCHECK(value->IsHeapNumber());
-  HeapNumber* num = HeapNumber::cast(value);
-  CHECK_GE(num->value(), 0.0);
-  CHECK_LE(num->value(), kMaxUInt32);
-  return static_cast<uint32_t>(num->value());
-}
-
-int32_t SafeInt32(Object* value) {
-  if (value->IsSmi()) {
-    return Smi::cast(value)->value();
-  }
-  DCHECK(value->IsHeapNumber());
-  HeapNumber* num = HeapNumber::cast(value);
-  CHECK_GE(num->value(), Smi::kMinValue);
-  CHECK_LE(num->value(), Smi::kMaxValue);
-  return static_cast<int32_t>(num->value());
-}
-
 // An iterator that returns first the module itself, then all modules linked via
 // next, then all linked via prev.
 class CompiledModulesIterator
@@ -420,7 +396,9 @@ DEFINE_OPTIONAL_OBJ_ACCESSORS(WasmMemoryObject, instances_link, kInstancesLink,
                               WasmInstanceWrapper)
 
 uint32_t WasmMemoryObject::current_pages() {
-  return SafeUint32(buffer()->byte_length()) / wasm::WasmModule::kPageSize;
+  uint32_t byte_length;
+  CHECK(buffer()->byte_length()->ToUint32(&byte_length));
+  return byte_length / wasm::WasmModule::kPageSize;
 }
 
 bool WasmMemoryObject::has_maximum_pages() {
@@ -662,7 +640,9 @@ WasmInstanceObject* WasmExportedFunction::instance() {
 }
 
 int WasmExportedFunction::function_index() {
-  return SafeInt32(GetEmbedderField(kIndex));
+  int32_t func_index;
+  CHECK(GetEmbedderField(kIndex)->ToInt32(&func_index));
+  return func_index;
 }
 
 WasmExportedFunction* WasmExportedFunction::cast(Object* object) {
@@ -967,6 +947,8 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
         maybe_signature_tables.ToHandleChecked());
     compiled_module->set_empty_function_tables(
         maybe_empty_function_tables.ToHandleChecked());
+    compiled_module->set_function_tables(
+        maybe_empty_function_tables.ToHandleChecked());
   }
   // TODO(mtrofin): we copy these because the order of finalization isn't
   // reliable, and we need these at Reset (which is called at
@@ -1132,9 +1114,10 @@ MaybeHandle<String> WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
                                         isolate);
   DCHECK_GE(module_bytes->length(), offset);
   DCHECK_GE(module_bytes->length() - offset, size);
-  Address raw = module_bytes->GetCharsAddress() + offset;
-  if (!unibrow::Utf8::Validate(reinterpret_cast<const byte*>(raw), size))
-    return {};  // UTF8 decoding error for name.
+  // UTF8 validation happens at decode time.
+  DCHECK(unibrow::Utf8::Validate(
+      reinterpret_cast<const byte*>(module_bytes->GetCharsAddress() + offset),
+      size));
   DCHECK_GE(kMaxInt, offset);
   DCHECK_GE(kMaxInt, size);
   return isolate->factory()->NewStringFromUtf8SubString(
@@ -1219,6 +1202,8 @@ MaybeHandle<String> WasmCompiledModule::GetFunctionNameOrNull(
     uint32_t func_index) {
   DCHECK_LT(func_index, compiled_module->module()->functions.size());
   WasmFunction& function = compiled_module->module()->functions[func_index];
+  DCHECK_IMPLIES(function.name_offset == 0, function.name_length == 0);
+  if (!function.name_offset) return {};
   return WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
       isolate, compiled_module, function.name_offset, function.name_length);
 }

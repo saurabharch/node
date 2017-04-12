@@ -105,7 +105,8 @@ namespace internal {
   V(EmptyParentheses)           \
   V(GetIterator)                \
   V(DoExpression)               \
-  V(RewritableExpression)
+  V(RewritableExpression)       \
+  V(ImportCallExpression)
 
 #define AST_NODE_LIST(V)                        \
   DECLARATION_NODE_LIST(V)                      \
@@ -1201,6 +1202,11 @@ class Literal final : public Expression {
     return value_->AsString();
   }
 
+  Smi* AsSmiLiteral() {
+    DCHECK(IsSmiLiteral());
+    return raw_value()->AsSmi();
+  }
+
   bool ToBooleanIsTrue() const { return raw_value()->BooleanValue(); }
   bool ToBooleanIsFalse() const { return !raw_value()->BooleanValue(); }
 
@@ -2134,6 +2140,11 @@ class BinaryOperation final : public Expression {
   TypeFeedbackId BinaryOperationFeedbackId() const {
     return TypeFeedbackId(local_id(1));
   }
+
+  // Returns true if one side is a Smi literal, returning the other side's
+  // sub-expression in |subexpr| and the literal Smi in |literal|.
+  bool IsSmiLiteralOperation(Expression** subexpr, Smi** literal);
+
   Maybe<int> fixed_right_arg() const {
     return has_fixed_right_arg_ ? Just(fixed_right_arg_value_) : Nothing<int>();
   }
@@ -2963,6 +2974,21 @@ class SuperCallReference final : public Expression {
   VariableProxy* this_function_var_;
 };
 
+// This AST Node is used to represent a dynamic import call --
+// import(argument).
+class ImportCallExpression final : public Expression {
+ public:
+  Expression* argument() const { return argument_; }
+  void set_argument(Expression* argument) { argument_ = argument; }
+
+ private:
+  friend class AstNodeFactory;
+
+  ImportCallExpression(Expression* argument, int pos)
+      : Expression(pos, kImportCallExpression), argument_(argument) {}
+
+  Expression* argument_;
+};
 
 // This class is produced when parsing the () in arrow functions without any
 // arguments and is not actually a valid expression.
@@ -3611,6 +3637,10 @@ class AstNodeFactory final BASE_EMBEDDED {
   GetIterator* NewGetIterator(Expression* iterable, IteratorType hint,
                               int pos) {
     return new (zone_) GetIterator(iterable, hint, pos);
+  }
+
+  ImportCallExpression* NewImportCallExpression(Expression* args, int pos) {
+    return new (zone_) ImportCallExpression(args, pos);
   }
 
   Zone* zone() const { return zone_; }

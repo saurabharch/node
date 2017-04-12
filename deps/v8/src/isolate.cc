@@ -44,6 +44,7 @@
 #include "src/prototype.h"
 #include "src/regexp/regexp-stack.h"
 #include "src/runtime-profiler.h"
+#include "src/setup-isolate.h"
 #include "src/simulator.h"
 #include "src/snapshot/deserializer.h"
 #include "src/tracing/tracing-category-observer.h"
@@ -310,8 +311,15 @@ Handle<String> Isolate::StackTraceString() {
   }
 }
 
+void Isolate::PushStackTraceAndDie(unsigned int magic1, void* ptr1, void* ptr2,
+                                   unsigned int magic2) {
+  PushStackTraceAndDie(magic1, ptr1, ptr2, nullptr, nullptr, nullptr, nullptr,
+                       nullptr, nullptr, magic2);
+}
 
-void Isolate::PushStackTraceAndDie(unsigned int magic, void* ptr1, void* ptr2,
+void Isolate::PushStackTraceAndDie(unsigned int magic1, void* ptr1, void* ptr2,
+                                   void* ptr3, void* ptr4, void* ptr5,
+                                   void* ptr6, void* ptr7, void* ptr8,
                                    unsigned int magic2) {
   const int kMaxStackTraceSize = 32 * KB;
   Handle<String> trace = StackTraceString();
@@ -320,29 +328,43 @@ void Isolate::PushStackTraceAndDie(unsigned int magic, void* ptr1, void* ptr2,
   String::WriteToFlat(*trace, buffer, 0, length);
   buffer[length] = '\0';
   // TODO(dcarney): convert buffer to utf8?
-  base::OS::PrintError("Stacktrace (%x-%x) %p %p: %s\n", magic, magic2, ptr1,
-                       ptr2, reinterpret_cast<char*>(buffer));
-  PushCodeObjectsAndDie(0xdeadc0de);
+  base::OS::PrintError(
+      "Stacktrace:"
+      "\n   magic1=%x magic2=%x ptr1=%p ptr2=%p ptr3=%p ptr4=%p ptr5=%p "
+      "ptr6=%p ptr7=%p ptr8=%p\n\n%s",
+      magic1, magic2, ptr1, ptr2, ptr3, ptr4, ptr5, ptr6, ptr7, ptr8,
+      reinterpret_cast<char*>(buffer));
+  PushCodeObjectsAndDie(0xdeadc0de, ptr1, ptr2, ptr3, ptr4, ptr5, ptr6, ptr7,
+                        ptr8, 0xdeadc0de);
 }
 
-void Isolate::PushCodeObjectsAndDie(unsigned int magic) {
+void Isolate::PushCodeObjectsAndDie(unsigned int magic1, void* ptr1, void* ptr2,
+                                    void* ptr3, void* ptr4, void* ptr5,
+                                    void* ptr6, void* ptr7, void* ptr8,
+                                    unsigned int magic2) {
   const int kMaxCodeObjects = 16;
   // Mark as volatile to lower the probability of optimizing code_objects
-  // away.
-  Code* volatile code_objects[kMaxCodeObjects];
+  // away. The first and last entries are set to the magic markers, making it
+  // easier to spot the array on the stack.
+  void* volatile code_objects[kMaxCodeObjects + 2];
+  code_objects[0] = reinterpret_cast<void*>(magic1);
+  code_objects[kMaxCodeObjects + 1] = reinterpret_cast<void*>(magic2);
   StackFrameIterator it(this);
   int numCodeObjects = 0;
   for (; !it.done() && numCodeObjects < kMaxCodeObjects; it.Advance()) {
-    code_objects[numCodeObjects++] = it.frame()->unchecked_code();
+    code_objects[1 + numCodeObjects++] = it.frame()->unchecked_code();
   }
 
   // Keep the top raw code object pointers on the stack in the hope that the
   // corresponding pages end up more frequently in the minidump.
   base::OS::PrintError(
-      "\nCodeObjects (%p length=%i): 1:%p 2:%p 3:%p 4:%p...\n\n",
+      "\nCodeObjects (%p length=%i): 1:%p 2:%p 3:%p 4:%p..."
+      "\n   magic1=%x magic2=%x ptr1=%p ptr2=%p ptr3=%p ptr4=%p ptr5=%p "
+      "ptr6=%p ptr7=%p ptr8=%p\n\n",
       static_cast<void*>(code_objects[0]), numCodeObjects,
-      static_cast<void*>(code_objects[0]), static_cast<void*>(code_objects[1]),
-      static_cast<void*>(code_objects[2]), static_cast<void*>(code_objects[4]));
+      static_cast<void*>(code_objects[1]), static_cast<void*>(code_objects[2]),
+      static_cast<void*>(code_objects[3]), static_cast<void*>(code_objects[4]),
+      magic1, magic2, ptr1, ptr2, ptr3, ptr4, ptr5, ptr6, ptr7, ptr8);
   base::OS::Abort();
 }
 
@@ -633,9 +655,7 @@ Handle<JSArray> Isolate::GetDetailedStackTrace(Handle<JSObject> error_object) {
 
 class CaptureStackTraceHelper {
  public:
-  CaptureStackTraceHelper(Isolate* isolate,
-                          StackTrace::StackTraceOptions options)
-      : isolate_(isolate), options_(options) {}
+  explicit CaptureStackTraceHelper(Isolate* isolate) : isolate_(isolate) {}
 
   Handle<StackFrameInfo> NewStackFrameObject(FrameSummary& summ) {
     if (summ.IsJavaScript()) return NewStackFrameObject(summ.AsJavaScript());
@@ -648,36 +668,22 @@ class CaptureStackTraceHelper {
       const FrameSummary::JavaScriptFrameSummary& summ) {
     Handle<StackFrameInfo> frame = factory()->NewStackFrameInfo();
     Handle<Script> script = Handle<Script>::cast(summ.script());
-    if (options_ & StackTrace::kLineNumber) {
-      Script::PositionInfo info;
-      bool valid_pos = Script::GetPositionInfo(script, summ.SourcePosition(),
-                                               &info, Script::WITH_OFFSET);
-      if (valid_pos) {
-        frame->set_line_number(info.line + 1);
-        if (options_ & StackTrace::kColumnOffset) {
-          frame->set_column_number(info.column + 1);
-        }
-      }
+    Script::PositionInfo info;
+    bool valid_pos = Script::GetPositionInfo(script, summ.SourcePosition(),
+                                             &info, Script::WITH_OFFSET);
+    if (valid_pos) {
+      frame->set_line_number(info.line + 1);
+      frame->set_column_number(info.column + 1);
     }
-
-    if (options_ & StackTrace::kScriptId) frame->set_script_id(script->id());
-    if (options_ & StackTrace::kScriptName) {
-      frame->set_script_name(script->name());
-    }
-    if (options_ & StackTrace::kScriptNameOrSourceURL) {
-      frame->set_script_name_or_source_url(script->GetNameOrSourceURL());
-    }
-    if (options_ & StackTrace::kIsEval) {
-      frame->set_is_eval(script->compilation_type() ==
-                         Script::COMPILATION_TYPE_EVAL);
-    }
-    if (options_ & StackTrace::kFunctionName) {
-      Handle<String> name = summ.FunctionName();
-      frame->set_function_name(*name);
-    }
-    if (options_ & StackTrace::kIsConstructor) {
-      frame->set_is_constructor(summ.is_constructor());
-    }
+    frame->set_script_id(script->id());
+    frame->set_script_name(script->name());
+    frame->set_script_name_or_source_url(script->GetNameOrSourceURL());
+    frame->set_is_eval(script->compilation_type() ==
+                       Script::COMPILATION_TYPE_EVAL);
+    Handle<String> function_name = summ.FunctionName();
+    frame->set_function_name(*function_name);
+    frame->set_is_constructor(summ.is_constructor());
+    frame->set_is_wasm(false);
     return frame;
   }
 
@@ -685,27 +691,20 @@ class CaptureStackTraceHelper {
       const FrameSummary::WasmFrameSummary& summ) {
     Handle<StackFrameInfo> info = factory()->NewStackFrameInfo();
 
-    if (options_ & StackTrace::kFunctionName) {
-      Handle<WasmCompiledModule> compiled_module(
-          summ.wasm_instance()->compiled_module(), isolate_);
-      Handle<String> name = WasmCompiledModule::GetFunctionName(
-          isolate_, compiled_module, summ.function_index());
-      info->set_function_name(*name);
-    }
+    Handle<WasmCompiledModule> compiled_module(
+        summ.wasm_instance()->compiled_module(), isolate_);
+    Handle<String> name = WasmCompiledModule::GetFunctionName(
+        isolate_, compiled_module, summ.function_index());
+    info->set_function_name(*name);
     // Encode the function index as line number (1-based).
-    if (options_ & StackTrace::kLineNumber) {
-      info->set_line_number(summ.function_index() + 1);
-    }
+    info->set_line_number(summ.function_index() + 1);
     // Encode the byte offset as column (1-based).
-    if (options_ & StackTrace::kColumnOffset) {
-      int position = summ.byte_offset();
-      // Make position 1-based.
-      if (position >= 0) ++position;
-      info->set_column_number(position);
-    }
-    if (options_ & StackTrace::kScriptId) {
-      info->set_script_id(summ.script()->id());
-    }
+    int position = summ.byte_offset();
+    // Make position 1-based.
+    if (position >= 0) ++position;
+    info->set_column_number(position);
+    info->set_script_id(summ.script()->id());
+    info->set_is_wasm(true);
     return info;
   }
 
@@ -713,13 +712,12 @@ class CaptureStackTraceHelper {
   inline Factory* factory() { return isolate_->factory(); }
 
   Isolate* isolate_;
-  StackTrace::StackTraceOptions options_;
 };
 
 Handle<JSArray> Isolate::CaptureCurrentStackTrace(
     int frame_limit, StackTrace::StackTraceOptions options) {
   DisallowJavascriptExecution no_js(this);
-  CaptureStackTraceHelper helper(this, options);
+  CaptureStackTraceHelper helper(this);
 
   // Ensure no negative values.
   int limit = Max(frame_limit, 0);
@@ -1241,6 +1239,29 @@ Object* Isolate::UnwindAndFindHandler() {
         return FoundHandler(nullptr, code, offset, return_sp, frame->fp());
       }
 
+      case StackFrame::STUB: {
+        // Some stubs are able to handle exceptions.
+        if (!catchable_by_js) break;
+        StubFrame* stub_frame = static_cast<StubFrame*>(frame);
+        Code* code = stub_frame->LookupCode();
+        if (!code->IsCode() || code->kind() != Code::BUILTIN ||
+            !code->handler_table()->length() || !code->is_turbofanned()) {
+          break;
+        }
+
+        int stack_slots = 0;  // Will contain stack slot count of frame.
+        int offset = stub_frame->LookupExceptionHandlerInTable(&stack_slots);
+        if (offset < 0) break;
+
+        // Compute the stack pointer from the frame pointer. This ensures
+        // that argument slots on the stack are dropped as returning would.
+        Address return_sp = frame->fp() +
+                            StandardFrameConstants::kFixedFrameSizeAboveFp -
+                            stack_slots * kPointerSize;
+
+        return FoundHandler(nullptr, code, offset, return_sp, frame->fp());
+      }
+
       case StackFrame::INTERPRETED: {
         // For interpreted frame we perform a range lookup in the handler table.
         if (!catchable_by_js) break;
@@ -1398,6 +1419,25 @@ Isolate::CatchType Isolate::PredictExceptionCatcher() {
             return CAUGHT_BY_DESUGARING;
           case HandlerTable::ASYNC_AWAIT:
             return CAUGHT_BY_ASYNC_AWAIT;
+        }
+      } break;
+
+      case StackFrame::STUB: {
+        Handle<Code> code(frame->LookupCode());
+        if (code->kind() == Code::BUILTIN && code->is_turbofanned() &&
+            code->handler_table()->length()) {
+          if (code->is_promise_rejection()) {
+            return CAUGHT_BY_PROMISE;
+          }
+
+          // This the exception throw in PromiseHandle which doesn't
+          // cause a promise rejection.
+          if (code->is_exception_caught()) {
+            return CAUGHT_BY_JAVASCRIPT;
+          }
+
+          // The built-in must be marked with an exception prediction.
+          UNREACHABLE();
         }
       } break;
 
@@ -2247,6 +2287,7 @@ Isolate::Isolate(bool enable_serializer)
       global_handles_(NULL),
       eternal_handles_(NULL),
       thread_manager_(NULL),
+      setup_delegate_(NULL),
       regexp_stack_(NULL),
       date_cache_(NULL),
       call_descriptor_data_(NULL),
@@ -2665,8 +2706,8 @@ bool Isolate::Init(Deserializer* des) {
   code_aging_helper_ = new CodeAgingHelper(this);
 
 // Initialize the interface descriptors ahead of time.
-#define INTERFACE_DESCRIPTOR(V) \
-  { V##Descriptor(this); }
+#define INTERFACE_DESCRIPTOR(Name, ...) \
+  { Name##Descriptor(this); }
   INTERFACE_DESCRIPTOR_LIST(INTERFACE_DESCRIPTOR)
 #undef INTERFACE_DESCRIPTOR
 
@@ -2686,7 +2727,10 @@ bool Isolate::Init(Deserializer* des) {
   InitializeThreadLocal();
 
   bootstrapper_->Initialize(create_heap_objects);
-  builtins_.SetUp(this, create_heap_objects);
+  if (setup_delegate_ == nullptr) {
+    setup_delegate_ = new SetupIsolateDelegate();
+  }
+  setup_delegate_->SetupBuiltins(this, create_heap_objects);
   if (create_heap_objects) heap_.CreateFixedStubs();
 
   if (FLAG_log_internal_timer_events) {
@@ -2713,10 +2757,12 @@ bool Isolate::Init(Deserializer* des) {
     }
     load_stub_cache_->Initialize();
     store_stub_cache_->Initialize();
-    interpreter_->Initialize();
+    setup_delegate_->SetupInterpreter(interpreter_, create_heap_objects);
 
     heap_.NotifyDeserializationComplete();
   }
+  delete setup_delegate_;
+  setup_delegate_ = nullptr;
 
   // Finish initialization of ThreadLocal after deserialization is done.
   clear_pending_exception();
@@ -3271,6 +3317,29 @@ void Isolate::FireCallCompletedCallback() {
 
 void Isolate::DebugStateUpdated() {
   promise_hook_or_debug_is_active_ = promise_hook_ || debug()->is_active();
+}
+
+void Isolate::RunHostImportModuleDynamicallyCallback(
+    Handle<String> source_url, Handle<String> specifier,
+    Handle<JSPromise> promise) {
+  auto result = v8::Utils::PromiseToDynamicImportResult(promise);
+  if (host_import_module_dynamically_callback_ == nullptr) {
+    Handle<Object> exception =
+        factory()->NewError(error_function(), MessageTemplate::kUnsupported);
+    CHECK(result->FinishDynamicImportFailure(
+        v8::Utils::ToLocal(handle(context(), this)),
+        v8::Utils::ToLocal(exception)));
+    return;
+  }
+
+  host_import_module_dynamically_callback_(
+      reinterpret_cast<v8::Isolate*>(this), v8::Utils::ToLocal(source_url),
+      v8::Utils::ToLocal(specifier), result);
+}
+
+void Isolate::SetHostImportModuleDynamicallyCallback(
+    HostImportModuleDynamicallyCallback callback) {
+  host_import_module_dynamically_callback_ = callback;
 }
 
 void Isolate::SetPromiseHook(PromiseHook hook) {

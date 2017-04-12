@@ -1353,8 +1353,9 @@ bool Heap::PerformGarbageCollection(
         MinorMarkCompact();
         break;
       case SCAVENGER:
-        if (fast_promotion_mode_ &&
-            CanExpandOldGeneration(new_space()->Size())) {
+        if ((fast_promotion_mode_ &&
+             CanExpandOldGeneration(new_space()->Size())) ||
+            concurrent_marking_->IsTaskPending()) {
           tracer()->NotifyYoungGenerationHandling(
               YoungGenerationHandling::kFastPromotionDuringScavenge);
           EvacuateYoungGeneration();
@@ -1626,8 +1627,10 @@ class ScavengeWeakObjectRetainer : public WeakObjectRetainer {
 
 void Heap::EvacuateYoungGeneration() {
   TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_EVACUATE);
-  DCHECK(fast_promotion_mode_);
-  DCHECK(CanExpandOldGeneration(new_space()->Size()));
+  if (!FLAG_concurrent_marking) {
+    DCHECK(fast_promotion_mode_);
+    DCHECK(CanExpandOldGeneration(new_space()->Size()));
+  }
 
   mark_compact_collector()->sweeper().EnsureNewSpaceCompleted();
 
@@ -2778,16 +2781,6 @@ void Heap::CreateInitialObjects() {
       RegExpResultsCache::kRegExpResultsCacheSize, TENURED));
   set_regexp_multiple_cache(*factory->NewFixedArray(
       RegExpResultsCache::kRegExpResultsCacheSize, TENURED));
-
-  // Allocate cache for external strings pointing to native source code.
-  set_natives_source_cache(
-      *factory->NewFixedArray(Natives::GetBuiltinsCount()));
-
-  set_extra_natives_source_cache(
-      *factory->NewFixedArray(ExtraNatives::GetBuiltinsCount()));
-
-  set_experimental_extra_natives_source_cache(
-      *factory->NewFixedArray(ExperimentalExtraNatives::GetBuiltinsCount()));
 
   set_undefined_cell(*factory->NewCell(factory->undefined_value()));
 

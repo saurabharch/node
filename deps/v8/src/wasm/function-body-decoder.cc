@@ -175,6 +175,7 @@ class WasmDecoder : public Decoder {
   static bool DecodeLocals(Decoder* decoder, const FunctionSig* sig,
                            ZoneVector<ValueType>* type_list) {
     DCHECK_NOT_NULL(type_list);
+    DCHECK_EQ(0, type_list->size());
     // Initialize from signature.
     if (sig != nullptr) {
       type_list->assign(sig->parameters().begin(), sig->parameters().end());
@@ -572,7 +573,7 @@ class WasmFullDecoder : public WasmDecoder {
 
   bool TraceFailed() {
     TRACE("wasm-error module+%-6d func+%d: %s\n\n", baserel(error_pc_),
-          startrel(error_pc_), error_msg_.get());
+          startrel(error_pc_), error_msg_.c_str());
     return false;
   }
 
@@ -1721,7 +1722,7 @@ class WasmFullDecoder : public WasmDecoder {
         PrintF(", control = ");
         compiler::WasmGraphBuilder::PrintDebugName(env->control);
       }
-      PrintF("}");
+      PrintF("}\n");
     }
 #endif
     ssa_env_ = env;
@@ -1948,9 +1949,9 @@ class WasmFullDecoder : public WasmDecoder {
   }
 
   virtual void onFirstError() {
-    end_ = start_;       // Terminate decoding loop.
+    end_ = pc_;          // Terminate decoding loop.
     builder_ = nullptr;  // Don't build any more nodes.
-    TRACE(" !%s\n", error_msg_.get());
+    TRACE(" !%s\n", error_msg_.c_str());
   }
 
   inline wasm::WasmCodePosition position() {
