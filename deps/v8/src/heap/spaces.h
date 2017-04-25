@@ -344,7 +344,7 @@ class MemoryChunk {
       + kPointerSize * NUMBER_OF_REMEMBERED_SET_TYPES  // TypedSlotSet* array
       + kPointerSize                                   // SkipList* skip_list_
       + kPointerSize    // AtomicValue high_water_mark_
-      + kPointerSize    // base::Mutex* mutex_
+      + kPointerSize    // base::RecursiveMutex* mutex_
       + kPointerSize    // base::AtomicWord concurrent_sweeping_
       + 2 * kSizetSize  // AtomicNumber free-list statistics
       + kPointerSize    // AtomicValue next_chunk_
@@ -404,7 +404,7 @@ class MemoryChunk {
     return reinterpret_cast<Address>(const_cast<MemoryChunk*>(this));
   }
 
-  base::Mutex* mutex() { return mutex_; }
+  base::RecursiveMutex* mutex() { return mutex_; }
 
   bool Contains(Address addr) {
     return addr >= area_start() && addr < area_end();
@@ -613,7 +613,7 @@ class MemoryChunk {
   // count highest number of bytes ever allocated on the page.
   base::AtomicValue<intptr_t> high_water_mark_;
 
-  base::Mutex* mutex_;
+  base::RecursiveMutex* mutex_;
 
   base::AtomicValue<ConcurrentSweepingState> concurrent_sweeping_;
 
@@ -670,9 +670,9 @@ class MarkingState {
   MarkingState(Bitmap* bitmap, intptr_t* live_bytes)
       : bitmap_(bitmap), live_bytes_(live_bytes) {}
 
-  void IncrementLiveBytes(intptr_t by) const {
-    *live_bytes_ += static_cast<int>(by);
-  }
+  template <MarkBit::AccessMode mode = MarkBit::NON_ATOMIC>
+  inline void IncrementLiveBytes(intptr_t by) const;
+
   void SetLiveBytes(intptr_t value) const {
     *live_bytes_ = static_cast<int>(value);
   }
@@ -689,6 +689,18 @@ class MarkingState {
   Bitmap* bitmap_;
   intptr_t* live_bytes_;
 };
+
+template <>
+inline void MarkingState::IncrementLiveBytes<MarkBit::NON_ATOMIC>(
+    intptr_t by) const {
+  *live_bytes_ += by;
+}
+
+template <>
+inline void MarkingState::IncrementLiveBytes<MarkBit::ATOMIC>(
+    intptr_t by) const {
+  reinterpret_cast<base::AtomicNumber<intptr_t>*>(live_bytes_)->Increment(by);
+}
 
 // -----------------------------------------------------------------------------
 // A page is a memory chunk of a size 1MB. Large object pages may be larger.

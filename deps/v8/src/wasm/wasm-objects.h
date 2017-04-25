@@ -102,7 +102,7 @@ class WasmMemoryObject : public JSObject {
   };
 
   DECLARE_CASTS(WasmMemoryObject);
-  DECLARE_ACCESSORS(buffer, JSArrayBuffer);
+  DECLARE_OPTIONAL_ACCESSORS(buffer, JSArrayBuffer);
   DECLARE_OPTIONAL_ACCESSORS(instances_link, WasmInstanceWrapper);
 
   void AddInstance(Isolate* isolate, Handle<WasmInstanceObject> object);
@@ -593,6 +593,17 @@ class WasmDebugInfo : public FixedArray {
   // Update the memory view of the interpreter after executing GrowMemory in
   // compiled code.
   void UpdateMemory(JSArrayBuffer* new_memory);
+
+  // Get scope details for a specific interpreted frame.
+  // This returns a JSArray of length two: One entry for the global scope, one
+  // for the local scope. Both elements are JSArrays of size
+  // ScopeIterator::kScopeDetailsSize and layout as described in debug-scopes.h.
+  // The global scope contains information about globals and the memory.
+  // The local scope contains information about parameters, locals, and stack
+  // values.
+  static Handle<JSArray> GetScopeDetails(Handle<WasmDebugInfo>,
+                                         Address frame_pointer,
+                                         int frame_index);
 };
 
 class WasmInstanceWrapper : public FixedArray {

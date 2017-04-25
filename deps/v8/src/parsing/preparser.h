@@ -178,6 +178,11 @@ class PreParserExpression {
                                variables);
   }
 
+  static PreParserExpression NewTargetExpression() {
+    return PreParserExpression(TypeField::encode(kExpression) |
+                               ExpressionTypeField::encode(kNewTarget));
+  }
+
   static PreParserExpression ObjectLiteral(
       ZoneList<VariableProxy*>* variables) {
     return PreParserExpression(TypeField::encode(kObjectLiteralExpression),
@@ -358,7 +363,8 @@ class PreParserExpression {
     kCallEvalExpression,
     kSuperCallReference,
     kNoTemplateTagExpression,
-    kAssignment
+    kAssignment,
+    kNewTarget
   };
 
   explicit PreParserExpression(uint32_t expression_code,
@@ -387,7 +393,7 @@ class PreParserExpression {
 
   // The rest of the bits are interpreted depending on the value
   // of the Type field, so they can share the storage.
-  typedef BitField<ExpressionType, TypeField::kNext, 3> ExpressionTypeField;
+  typedef BitField<ExpressionType, TypeField::kNext, 4> ExpressionTypeField;
   typedef BitField<bool, TypeField::kNext, 1> IsUseStrictField;
   typedef BitField<bool, IsUseStrictField::kNext, 1> IsUseAsmField;
   typedef BitField<PreParserIdentifier::Type, TypeField::kNext, 10>
@@ -889,10 +895,11 @@ class PreParser : public ParserBase<PreParser> {
             AstValueFactory* ast_value_factory,
             PendingCompilationErrorHandler* pending_error_handler,
             RuntimeCallStats* runtime_call_stats,
+            PreParsedScopeData* preparsed_scope_data = nullptr,
             bool parsing_on_main_thread = true)
       : ParserBase<PreParser>(zone, scanner, stack_limit, nullptr,
                               ast_value_factory, runtime_call_stats,
-                              parsing_on_main_thread),
+                              preparsed_scope_data, parsing_on_main_thread),
         use_counts_(nullptr),
         preparse_data_(FLAG_use_parse_tasks ? new PreParseData() : nullptr),
         track_unresolved_variables_(false),
@@ -941,9 +948,11 @@ class PreParser : public ParserBase<PreParser> {
   bool AllowsLazyParsingWithoutUnresolvedVariables() const { return false; }
   bool parse_lazily() const { return false; }
 
-  V8_INLINE LazyParsingResult SkipFunction(
-      FunctionKind kind, DeclarationScope* function_scope, int* num_parameters,
-      int* function_length, bool is_inner_function, bool may_abort, bool* ok) {
+  V8_INLINE LazyParsingResult SkipFunction(FunctionKind kind,
+                                           DeclarationScope* function_scope,
+                                           int* num_parameters,
+                                           bool is_inner_function,
+                                           bool may_abort, bool* ok) {
     UNREACHABLE();
     return kLazyParsingComplete;
   }
@@ -1516,7 +1525,7 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   V8_INLINE PreParserExpression NewTargetExpression(int pos) {
-    return PreParserExpression::Default();
+    return PreParserExpression::NewTargetExpression();
   }
 
   V8_INLINE PreParserExpression FunctionSentExpression(int pos) {

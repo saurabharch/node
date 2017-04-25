@@ -6,7 +6,6 @@
 #define V8_ELEMENTS_H_
 
 #include "src/elements-kind.h"
-#include "src/heap/heap.h"
 #include "src/isolate.h"
 #include "src/keys.h"
 #include "src/objects.h"
@@ -188,6 +187,9 @@ class ElementsAccessor {
   virtual void CopyElements(Handle<FixedArrayBase> source,
                             ElementsKind source_kind,
                             Handle<FixedArrayBase> destination, int size) = 0;
+
+  virtual Object* CopyElements(Handle<JSReceiver> source,
+                               Handle<JSObject> destination, size_t length) = 0;
 
   virtual Handle<FixedArray> CreateListFromArray(Isolate* isolate,
                                                  Handle<JSArray> array) = 0;

@@ -1523,8 +1523,53 @@ Node* CodeStubAssembler::StoreFixedDoubleArrayElement(
   return StoreNoWriteBarrier(rep, object, offset, value);
 }
 
-Node* CodeStubAssembler::BuildAppendJSArray(ElementsKind kind, Node* context,
-                                            Node* array,
+Node* CodeStubAssembler::EnsureArrayPushable(Node* receiver, Label* bailout) {
+  // Disallow pushing onto prototypes. It might be the JSArray prototype.
+  // Disallow pushing onto non-extensible objects.
+  Comment("Disallow pushing onto prototypes");
+  Node* map = LoadMap(receiver);
+  Node* bit_field2 = LoadMapBitField2(map);
+  int mask = static_cast<int>(Map::IsPrototypeMapBits::kMask) |
+             (1 << Map::kIsExtensible);
+  Node* test = Word32And(bit_field2, Int32Constant(mask));
+  GotoIf(Word32NotEqual(test, Int32Constant(1 << Map::kIsExtensible)), bailout);
+
+  // Disallow pushing onto arrays in dictionary named property mode. We need
+  // to figure out whether the length property is still writable.
+  Comment("Disallow pushing onto arrays in dictionary named property mode");
+  GotoIf(IsDictionaryMap(map), bailout);
+
+  // Check whether the length property is writable. The length property is the
+  // only default named property on arrays. It's nonconfigurable, hence is
+  // guaranteed to stay the first property.
+  Node* descriptors = LoadMapDescriptors(map);
+  Node* details =
+      LoadFixedArrayElement(descriptors, DescriptorArray::ToDetailsIndex(0));
+  GotoIf(IsSetSmi(details, PropertyDetails::kAttributesReadOnlyMask), bailout);
+
+  Node* kind = DecodeWord32<Map::ElementsKindBits>(bit_field2);
+  return kind;
+}
+
+void CodeStubAssembler::PossiblyGrowElementsCapacity(
+    ParameterMode mode, ElementsKind kind, Node* array, Node* length,
+    Variable* var_elements, Node* growth, Label* bailout) {
+  Label fits(this, var_elements);
+  Node* capacity =
+      TaggedToParameter(LoadFixedArrayBaseLength(var_elements->value()), mode);
+  // length and growth nodes are already in a ParameterMode appropriate
+  // representation.
+  Node* new_length = IntPtrOrSmiAdd(growth, length, mode);
+  GotoIfNot(IntPtrOrSmiGreaterThan(new_length, capacity, mode), &fits);
+  Node* new_capacity = CalculateNewElementsCapacity(new_length, mode);
+  var_elements->Bind(GrowElementsCapacity(array, var_elements->value(), kind,
+                                          kind, capacity, new_capacity, mode,
+                                          bailout));
+  Goto(&fits);
+  BIND(&fits);
+}
+
+Node* CodeStubAssembler::BuildAppendJSArray(ElementsKind kind, Node* array,
                                             CodeStubArguments& args,
                                             Variable& arg_index,
                                             Label* bailout) {
@@ -1536,46 +1581,22 @@ Node* CodeStubAssembler::BuildAppendJSArray(ElementsKind kind, Node* context,
   VARIABLE(var_length, OptimalParameterRepresentation(),
            TaggedToParameter(LoadJSArrayLength(array), mode));
   VARIABLE(var_elements, MachineRepresentation::kTagged, LoadElements(array));
-  Node* capacity =
-      TaggedToParameter(LoadFixedArrayBaseLength(var_elements.value()), mode);
 
   // Resize the capacity of the fixed array if it doesn't fit.
-  Label fits(this, &var_elements);
   Node* first = arg_index.value();
-  Node* growth = IntPtrSub(args.GetLength(), first);
-  Node* new_length =
-      IntPtrOrSmiAdd(WordToParameter(growth, mode), var_length.value(), mode);
-  GotoIfNot(IntPtrOrSmiGreaterThan(new_length, capacity, mode), &fits);
-  Node* new_capacity = CalculateNewElementsCapacity(new_length, mode);
-  var_elements.Bind(GrowElementsCapacity(array, var_elements.value(), kind,
-                                         kind, capacity, new_capacity, mode,
-                                         &pre_bailout));
-  Goto(&fits);
-  BIND(&fits);
-  Node* elements = var_elements.value();
+  Node* growth = WordToParameter(IntPtrSub(args.GetLength(), first), mode);
+  PossiblyGrowElementsCapacity(mode, kind, array, var_length.value(),
+                               &var_elements, growth, &pre_bailout);
 
   // Push each argument onto the end of the array now that there is enough
   // capacity.
   CodeStubAssembler::VariableList push_vars({&var_length}, zone());
+  Node* elements = var_elements.value();
   args.ForEach(
       push_vars,
       [this, kind, mode, elements, &var_length, &pre_bailout](Node* arg) {
-        if (IsFastSmiElementsKind(kind)) {
-          GotoIf(TaggedIsNotSmi(arg), &pre_bailout);
-        } else if (IsFastDoubleElementsKind(kind)) {
-          GotoIfNotNumber(arg, &pre_bailout);
-        }
-        if (IsFastDoubleElementsKind(kind)) {
-          Node* double_value = ChangeNumberToFloat64(arg);
-          StoreFixedDoubleArrayElement(elements, var_length.value(),
-                                       Float64SilenceNaN(double_value), mode);
-        } else {
-          WriteBarrierMode barrier_mode = IsFastSmiElementsKind(kind)
-                                              ? SKIP_WRITE_BARRIER
-                                              : UPDATE_WRITE_BARRIER;
-          StoreFixedArrayElement(elements, var_length.value(), arg,
-                                 barrier_mode, 0, mode);
-        }
+        TryStoreArrayElement(kind, mode, &pre_bailout, elements,
+                             var_length.value(), arg);
         Increment(var_length, 1, mode);
       },
       first, nullptr);
@@ -1598,6 +1619,49 @@ Node* CodeStubAssembler::BuildAppendJSArray(ElementsKind kind, Node* context,
 
   BIND(&success);
   return var_tagged_length.value();
+}
+
+void CodeStubAssembler::TryStoreArrayElement(ElementsKind kind,
+                                             ParameterMode mode, Label* bailout,
+                                             Node* elements, Node* index,
+                                             Node* value) {
+  if (IsFastSmiElementsKind(kind)) {
+    GotoIf(TaggedIsNotSmi(value), bailout);
+  } else if (IsFastDoubleElementsKind(kind)) {
+    GotoIfNotNumber(value, bailout);
+  }
+  if (IsFastDoubleElementsKind(kind)) {
+    Node* double_value = ChangeNumberToFloat64(value);
+    StoreFixedDoubleArrayElement(elements, index,
+                                 Float64SilenceNaN(double_value), mode);
+  } else {
+    WriteBarrierMode barrier_mode =
+        IsFastSmiElementsKind(kind) ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
+    StoreFixedArrayElement(elements, index, value, barrier_mode, 0, mode);
+  }
+}
+
+void CodeStubAssembler::BuildAppendJSArray(ElementsKind kind, Node* array,
+                                           Node* value, Label* bailout) {
+  Comment("BuildAppendJSArray: %s", ElementsKindToString(kind));
+  ParameterMode mode = OptimalParameterMode();
+  VARIABLE(var_length, OptimalParameterRepresentation(),
+           TaggedToParameter(LoadJSArrayLength(array), mode));
+  VARIABLE(var_elements, MachineRepresentation::kTagged, LoadElements(array));
+
+  // Resize the capacity of the fixed array if it doesn't fit.
+  Node* growth = IntPtrOrSmiConstant(1, mode);
+  PossiblyGrowElementsCapacity(mode, kind, array, var_length.value(),
+                               &var_elements, growth, bailout);
+
+  // Push each argument onto the end of the array now that there is enough
+  // capacity.
+  TryStoreArrayElement(kind, mode, bailout, var_elements.value(),
+                       var_length.value(), value);
+  Increment(var_length, 1, mode);
+
+  Node* length = ParameterToTagged(var_length.value(), mode);
+  StoreObjectFieldNoWriteBarrier(array, JSArray::kLengthOffset, length);
 }
 
 Node* CodeStubAssembler::AllocateHeapNumber(MutableMode mode) {
@@ -2900,10 +2964,27 @@ Node* CodeStubAssembler::ToThisValue(Node* context, Node* value,
 
   BIND(&done_throw);
   {
+    const char* primitive_name = nullptr;
+    switch (primitive_type) {
+      case PrimitiveType::kBoolean:
+        primitive_name = "Boolean";
+        break;
+      case PrimitiveType::kNumber:
+        primitive_name = "Number";
+        break;
+      case PrimitiveType::kString:
+        primitive_name = "String";
+        break;
+      case PrimitiveType::kSymbol:
+        primitive_name = "Symbol";
+        break;
+    }
+    CHECK_NOT_NULL(primitive_name);
+
     // The {value} is not a compatible receiver for this method.
-    CallRuntime(Runtime::kThrowNotGeneric, context,
-                HeapConstant(factory()->NewStringFromAsciiChecked(method_name,
-                                                                  TENURED)));
+    CallRuntime(Runtime::kThrowTypeError, context,
+                SmiConstant(MessageTemplate::kNotGeneric),
+                CStringConstant(method_name), CStringConstant(primitive_name));
     Unreachable();
   }
 
@@ -3007,6 +3088,13 @@ Node* CodeStubAssembler::IsSequentialStringInstanceType(Node* instance_type) {
   return Word32Equal(
       Word32And(instance_type, Int32Constant(kStringRepresentationMask)),
       Int32Constant(kSeqStringTag));
+}
+
+Node* CodeStubAssembler::IsConsStringInstanceType(Node* instance_type) {
+  CSA_ASSERT(this, IsStringInstanceType(instance_type));
+  return Word32Equal(
+      Word32And(instance_type, Int32Constant(kStringRepresentationMask)),
+      Int32Constant(kConsStringTag));
 }
 
 Node* CodeStubAssembler::IsExternalStringInstanceType(Node* instance_type) {
@@ -4461,7 +4549,8 @@ void CodeStubAssembler::Use(Label* label) {
 
 void CodeStubAssembler::TryToName(Node* key, Label* if_keyisindex,
                                   Variable* var_index, Label* if_keyisunique,
-                                  Variable* var_unique, Label* if_bailout) {
+                                  Variable* var_unique, Label* if_bailout,
+                                  Label* if_notinternalized) {
   DCHECK_EQ(MachineType::PointerRepresentation(), var_index->rep());
   DCHECK_EQ(MachineRepresentation::kTagged, var_unique->rep());
   Comment("TryToName");
@@ -4500,7 +4589,8 @@ void CodeStubAssembler::TryToName(Node* key, Label* if_keyisindex,
   STATIC_ASSERT(kNotInternalizedTag != 0);
   Node* not_internalized =
       Word32And(key_instance_type, Int32Constant(kIsNotInternalizedMask));
-  GotoIf(Word32NotEqual(not_internalized, Int32Constant(0)), if_bailout);
+  GotoIf(Word32NotEqual(not_internalized, Int32Constant(0)),
+         if_notinternalized != nullptr ? if_notinternalized : if_bailout);
   Goto(if_keyisunique);
 
   BIND(&if_thinstring);
@@ -4510,6 +4600,30 @@ void CodeStubAssembler::TryToName(Node* key, Label* if_keyisindex,
   BIND(&if_hascachedindex);
   var_index->Bind(DecodeWordFromWord32<Name::ArrayIndexValueBits>(hash));
   Goto(if_keyisindex);
+}
+
+void CodeStubAssembler::TryInternalizeString(
+    Node* string, Label* if_index, Variable* var_index, Label* if_internalized,
+    Variable* var_internalized, Label* if_not_internalized, Label* if_bailout) {
+  DCHECK(var_index->rep() == MachineType::PointerRepresentation());
+  DCHECK(var_internalized->rep() == MachineRepresentation::kTagged);
+  Node* function = ExternalConstant(
+      ExternalReference::try_internalize_string_function(isolate()));
+  Node* result = CallCFunction1(MachineType::AnyTagged(),
+                                MachineType::AnyTagged(), function, string);
+  Label internalized(this);
+  GotoIf(TaggedIsNotSmi(result), &internalized);
+  Node* word_result = SmiUntag(result);
+  GotoIf(WordEqual(word_result, IntPtrConstant(ResultSentinel::kNotFound)),
+         if_not_internalized);
+  GotoIf(WordEqual(word_result, IntPtrConstant(ResultSentinel::kUnsupported)),
+         if_bailout);
+  var_index->Bind(word_result);
+  Goto(if_index);
+
+  BIND(&internalized);
+  var_internalized->Bind(result);
+  Goto(if_internalized);
 }
 
 template <typename Dictionary>
@@ -4524,9 +4638,10 @@ template Node* CodeStubAssembler::EntryToIndex<GlobalDictionary>(Node*, int);
 template Node* CodeStubAssembler::EntryToIndex<SeededNumberDictionary>(Node*,
                                                                        int);
 
+// This must be kept in sync with HashTableBase::ComputeCapacity().
 Node* CodeStubAssembler::HashTableComputeCapacity(Node* at_least_space_for) {
-  Node* capacity = IntPtrRoundUpToPowerOfTwo32(
-      WordShl(at_least_space_for, IntPtrConstant(1)));
+  Node* capacity = IntPtrRoundUpToPowerOfTwo32(IntPtrAdd(
+      at_least_space_for, WordShr(at_least_space_for, IntPtrConstant(1))));
   return IntPtrMax(capacity, IntPtrConstant(HashTableBase::kMinCapacity));
 }
 
@@ -4538,29 +4653,6 @@ Node* CodeStubAssembler::IntPtrMax(Node* left, Node* right) {
 Node* CodeStubAssembler::IntPtrMin(Node* left, Node* right) {
   return SelectConstant(IntPtrLessThanOrEqual(left, right), left, right,
                         MachineType::PointerRepresentation());
-}
-
-template <class Dictionary>
-Node* CodeStubAssembler::GetNumberOfElements(Node* dictionary) {
-  return LoadFixedArrayElement(dictionary, Dictionary::kNumberOfElementsIndex);
-}
-
-template <class Dictionary>
-void CodeStubAssembler::SetNumberOfElements(Node* dictionary,
-                                            Node* num_elements_smi) {
-  StoreFixedArrayElement(dictionary, Dictionary::kNumberOfElementsIndex,
-                         num_elements_smi, SKIP_WRITE_BARRIER);
-}
-
-template <class Dictionary>
-Node* CodeStubAssembler::GetNumberOfDeletedElements(Node* dictionary) {
-  return LoadFixedArrayElement(dictionary,
-                               Dictionary::kNumberOfDeletedElementsIndex);
-}
-
-template <class Dictionary>
-Node* CodeStubAssembler::GetCapacity(Node* dictionary) {
-  return LoadFixedArrayElement(dictionary, Dictionary::kCapacityIndex);
 }
 
 template <class Dictionary>
@@ -5744,6 +5836,21 @@ void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
   Node* combined_feedback = SmiOr(previous_feedback, feedback);
   StoreFixedArrayElement(feedback_vector, slot_id, combined_feedback,
                          SKIP_WRITE_BARRIER);
+}
+
+void CodeStubAssembler::CheckForAssociatedProtector(Node* name,
+                                                    Label* if_protector) {
+  // This list must be kept in sync with LookupIterator::UpdateProtector!
+  // TODO(jkummerow): Would it be faster to have a bit in Symbol::flags()?
+  GotoIf(WordEqual(name, LoadRoot(Heap::kconstructor_stringRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kiterator_symbolRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kspecies_symbolRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kis_concat_spreadable_symbolRootIndex)),
+         if_protector);
+  // Fall through if no case matched.
 }
 
 Node* CodeStubAssembler::LoadReceiverMap(Node* receiver) {
@@ -8440,6 +8547,11 @@ Node* CodeStubAssembler::IsHoleyFastElementsKind(Node* elements_kind) {
   // Check prototype chain if receiver does not have packed elements.
   Node* holey_elements = Word32And(elements_kind, Int32Constant(1));
   return Word32Equal(holey_elements, Int32Constant(1));
+}
+
+Node* CodeStubAssembler::IsElementsKindGreaterThan(
+    Node* target_kind, ElementsKind reference_kind) {
+  return Int32GreaterThan(target_kind, Int32Constant(reference_kind));
 }
 
 Node* CodeStubAssembler::IsDebugActive() {

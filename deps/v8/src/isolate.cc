@@ -620,7 +620,7 @@ MaybeHandle<JSReceiver> Isolate::CaptureAndSetDetailedStackTrace(
   if (capture_stack_trace_for_uncaught_exceptions_) {
     // Capture stack trace for a detailed exception message.
     Handle<Name> key = factory()->detailed_stack_trace_symbol();
-    Handle<JSArray> stack_trace = CaptureCurrentStackTrace(
+    Handle<FixedArray> stack_trace = CaptureCurrentStackTrace(
         stack_trace_for_uncaught_exceptions_frame_limit_,
         stack_trace_for_uncaught_exceptions_options_);
     RETURN_ON_EXCEPTION(
@@ -643,13 +643,13 @@ MaybeHandle<JSReceiver> Isolate::CaptureAndSetSimpleStackTrace(
   return error_object;
 }
 
-
-Handle<JSArray> Isolate::GetDetailedStackTrace(Handle<JSObject> error_object) {
+Handle<FixedArray> Isolate::GetDetailedStackTrace(
+    Handle<JSObject> error_object) {
   Handle<Name> key_detailed = factory()->detailed_stack_trace_symbol();
   Handle<Object> stack_trace =
       JSReceiver::GetDataProperty(error_object, key_detailed);
-  if (stack_trace->IsJSArray()) return Handle<JSArray>::cast(stack_trace);
-  return Handle<JSArray>();
+  if (stack_trace->IsFixedArray()) return Handle<FixedArray>::cast(stack_trace);
+  return Handle<FixedArray>();
 }
 
 
@@ -666,6 +666,32 @@ class CaptureStackTraceHelper {
 
   Handle<StackFrameInfo> NewStackFrameObject(
       const FrameSummary::JavaScriptFrameSummary& summ) {
+    int code_offset;
+    Handle<ByteArray> source_position_table;
+    Object* maybe_cache;
+    Handle<UnseededNumberDictionary> cache;
+    if (!FLAG_optimize_for_size) {
+      code_offset = summ.code_offset();
+      source_position_table =
+          handle(summ.abstract_code()->source_position_table(), isolate_);
+      maybe_cache = summ.abstract_code()->stack_frame_cache();
+      if (maybe_cache->IsUnseededNumberDictionary()) {
+        cache = handle(UnseededNumberDictionary::cast(maybe_cache));
+      } else {
+        cache = UnseededNumberDictionary::New(isolate_, 1);
+      }
+      int entry = cache->FindEntry(code_offset);
+      if (entry != UnseededNumberDictionary::kNotFound) {
+        Handle<StackFrameInfo> frame(
+            StackFrameInfo::cast(cache->ValueAt(entry)));
+        DCHECK(frame->function_name()->IsString());
+        Handle<String> function_name = summ.FunctionName();
+        if (function_name->Equals(String::cast(frame->function_name()))) {
+          return frame;
+        }
+      }
+    }
+
     Handle<StackFrameInfo> frame = factory()->NewStackFrameInfo();
     Handle<Script> script = Handle<Script>::cast(summ.script());
     Script::PositionInfo info;
@@ -684,6 +710,14 @@ class CaptureStackTraceHelper {
     frame->set_function_name(*function_name);
     frame->set_is_constructor(summ.is_constructor());
     frame->set_is_wasm(false);
+    if (!FLAG_optimize_for_size) {
+      auto new_cache =
+          UnseededNumberDictionary::AtNumberPut(cache, code_offset, frame);
+      if (*new_cache != *cache || !maybe_cache->IsUnseededNumberDictionary()) {
+        AbstractCode::SetStackFrameCache(summ.abstract_code(), new_cache);
+      }
+    }
+    frame->set_id(next_id());
     return frame;
   }
 
@@ -705,25 +739,30 @@ class CaptureStackTraceHelper {
     info->set_column_number(position);
     info->set_script_id(summ.script()->id());
     info->set_is_wasm(true);
+    info->set_id(next_id());
     return info;
   }
 
  private:
   inline Factory* factory() { return isolate_->factory(); }
 
+  int next_id() const {
+    int id = isolate_->last_stack_frame_info_id() + 1;
+    isolate_->set_last_stack_frame_info_id(id);
+    return id;
+  }
+
   Isolate* isolate_;
 };
 
-Handle<JSArray> Isolate::CaptureCurrentStackTrace(
+Handle<FixedArray> Isolate::CaptureCurrentStackTrace(
     int frame_limit, StackTrace::StackTraceOptions options) {
   DisallowJavascriptExecution no_js(this);
   CaptureStackTraceHelper helper(this);
 
   // Ensure no negative values.
   int limit = Max(frame_limit, 0);
-  Handle<JSArray> stack_trace = factory()->NewJSArray(frame_limit);
-  Handle<FixedArray> stack_trace_elems(
-      FixedArray::cast(stack_trace->elements()), this);
+  Handle<FixedArray> stack_trace_elems = factory()->NewFixedArray(limit);
 
   int frames_seen = 0;
   for (StackTraceFrameIterator it(this); !it.done() && (frames_seen < limit);
@@ -744,9 +783,8 @@ Handle<JSArray> Isolate::CaptureCurrentStackTrace(
       frames_seen++;
     }
   }
-
-  stack_trace->set_length(Smi::FromInt(frames_seen));
-  return stack_trace;
+  stack_trace_elems->Shrink(frames_seen);
+  return stack_trace_elems;
 }
 
 
@@ -1637,7 +1675,7 @@ bool Isolate::ComputeLocationFromStackTrace(MessageLocation* target,
 
 Handle<JSMessageObject> Isolate::CreateMessage(Handle<Object> exception,
                                                MessageLocation* location) {
-  Handle<JSArray> stack_trace_object;
+  Handle<FixedArray> stack_trace_object;
   if (capture_stack_trace_for_uncaught_exceptions_) {
     if (exception->IsJSError()) {
       // We fetch the stack trace that corresponds to this error object.
@@ -3364,7 +3402,7 @@ void Isolate::ReportPromiseReject(Handle<JSObject> promise,
                                   Handle<Object> value,
                                   v8::PromiseRejectEvent event) {
   if (promise_reject_callback_ == NULL) return;
-  Handle<JSArray> stack_trace;
+  Handle<FixedArray> stack_trace;
   if (event == v8::kPromiseRejectWithNoHandler && value->IsJSObject()) {
     stack_trace = GetDetailedStackTrace(Handle<JSObject>::cast(value));
   }

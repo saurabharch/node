@@ -341,8 +341,7 @@ class ErrorUtils : public AllStatic {
   T(NotAPromise, "% is not a promise")                                         \
   T(NotConstructor, "% is not a constructor")                                  \
   T(NotDateObject, "this is not a Date object.")                               \
-  T(NotIntlObject, "% is not an i18n object.")                                 \
-  T(NotGeneric, "% is not generic")                                            \
+  T(NotGeneric, "% requires that 'this' be a %")                               \
   T(NotIterable, "% is not iterable")                                          \
   T(NotPropertyName, "% is not a valid property name")                         \
   T(NotTypedArray, "this is not a typed array.")                               \
@@ -461,7 +460,6 @@ class ErrorUtils : public AllStatic {
   T(RegExpInvalidReplaceString, "Invalid replacement string: '%'")             \
   T(RegExpNonObject, "% getter called on non-object %")                        \
   T(RegExpNonRegExp, "% getter called on non-RegExp object")                   \
-  T(ReinitializeIntl, "Trying to re-initialize % object.")                     \
   T(ResolverNotAFunction, "Promise resolver % is not a function")              \
   T(RestrictedFunctionProperties,                                              \
     "'caller' and 'arguments' are restricted function properties and cannot "  \
@@ -735,7 +733,7 @@ class MessageHandler {
   static Handle<JSMessageObject> MakeMessageObject(
       Isolate* isolate, MessageTemplate::Template type,
       const MessageLocation* location, Handle<Object> argument,
-      Handle<JSArray> stack_frames);
+      Handle<FixedArray> stack_frames);
 
   // Report a formatted message (needs JS allocation).
   static void ReportMessage(Isolate* isolate, const MessageLocation* loc,

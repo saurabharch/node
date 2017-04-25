@@ -4,11 +4,6 @@
 
 #include "src/asmjs/asm-parser.h"
 
-// Required to get M_E etc. for MSVC.
-// References from STDLIB_MATH_VALUE_LIST in asm-names.h
-#if defined(_WIN32)
-#define _USE_MATH_DEFINES
-#endif
 #include <math.h>
 #include <string.h>
 
@@ -29,17 +24,17 @@ namespace wasm {
 #define FAIL_AND_RETURN(ret, msg)                                        \
   failed_ = true;                                                        \
   failure_message_ = msg;                                                \
-  failure_location_ = scanner_.GetPosition();                            \
+  failure_location_ = static_cast<int>(scanner_.Position());             \
   if (FLAG_trace_asm_parser) {                                           \
     PrintF("[asm.js failure: %s, token: '%s', see: %s:%d]\n", msg,       \
            scanner_.Name(scanner_.Token()).c_str(), __FILE__, __LINE__); \
   }                                                                      \
   return ret;
 #else
-#define FAIL_AND_RETURN(ret, msg)             \
-  failed_ = true;                             \
-  failure_message_ = msg;                     \
-  failure_location_ = scanner_.GetPosition(); \
+#define FAIL_AND_RETURN(ret, msg)                            \
+  failed_ = true;                                            \
+  failure_message_ = msg;                                    \
+  failure_location_ = static_cast<int>(scanner_.Position()); \
   return ret;
 #endif
 
@@ -91,6 +86,8 @@ AsmJsParser::AsmJsParser(Isolate* isolate, Zone* zone, Handle<Script> script,
       inside_heap_assignment_(false),
       heap_access_type_(nullptr),
       block_stack_(zone),
+      call_coercion_(nullptr),
+      call_coercion_deferred_(nullptr),
       pending_label_(0),
       global_imports_(zone) {
   InitializeStdlibTypes();
@@ -234,11 +231,8 @@ wasm::AsmJsParser::VarInfo* AsmJsParser::GetVarInfo(
 }
 
 uint32_t AsmJsParser::VarIndex(VarInfo* info) {
-  if (info->import != nullptr) {
-    return info->index;
-  } else {
-    return info->index + static_cast<uint32_t>(global_imports_.size());
-  }
+  DCHECK(info->kind == VarKind::kGlobal);
+  return info->index + static_cast<uint32_t>(global_imports_.size());
 }
 
 void AsmJsParser::AddGlobalImport(std::string name, AsmType* type,
@@ -248,38 +242,14 @@ void AsmJsParser::AddGlobalImport(std::string name, AsmType* type,
   // AsmModuleBuilder should really own import names.
   char* name_data = zone()->NewArray<char>(name.size());
   memcpy(name_data, name.data(), name.size());
-  if (mutable_variable) {
-    // Allocate a separate variable for the import.
-    DeclareGlobal(info, true, type, vtype);
-    // Record the need to initialize the global from the import.
-    global_imports_.push_back({name_data, name.size(), 0, info->index, true});
-  } else {
-    // Just use the import directly.
-    global_imports_.push_back({name_data, name.size(), 0, info->index, false});
-  }
-  GlobalImport& gi = global_imports_.back();
-  // TODO(bradnelson): Reuse parse buffer memory / make wasm-module-builder
-  // managed the memory for the import name (currently have to keep our
-  // own memory for it).
-  gi.import_index = module_builder_->AddGlobalImport(
-      name_data, static_cast<int>(name.size()), vtype);
-  if (!mutable_variable) {
-    info->DeclareGlobalImport(type, gi.import_index);
-  }
-}
 
-void AsmJsParser::VarInfo::DeclareGlobalImport(AsmType* type, uint32_t index) {
-  kind = VarKind::kGlobal;
-  this->type = type;
-  this->index = index;
-  mutable_variable = false;
-}
+  // Allocate a separate variable for the import.
+  // TODO(mstarzinger): Consider using the imported global directly instead of
+  // allocating a separate global variable for immutable (i.e. const) imports.
+  DeclareGlobal(info, mutable_variable, type, vtype);
 
-void AsmJsParser::VarInfo::DeclareStdlibFunc(VarKind kind, AsmType* type) {
-  this->kind = kind;
-  this->type = type;
-  index = 0;  // unused
-  mutable_variable = false;
+  // Record the need to initialize the global from the import.
+  global_imports_.push_back({name_data, name.size(), vtype, info});
 }
 
 void AsmJsParser::DeclareGlobal(VarInfo* info, bool mutable_variable,
@@ -289,6 +259,14 @@ void AsmJsParser::DeclareGlobal(VarInfo* info, bool mutable_variable,
   info->type = type;
   info->index = module_builder_->AddGlobal(vtype, false, true, init);
   info->mutable_variable = mutable_variable;
+}
+
+void AsmJsParser::DeclareStdlibFunc(VarInfo* info, VarKind kind,
+                                    AsmType* type) {
+  info->kind = kind;
+  info->type = type;
+  info->index = 0;  // unused
+  info->mutable_variable = false;
 }
 
 uint32_t AsmJsParser::TempVariable(int index) {
@@ -386,12 +364,15 @@ void AsmJsParser::ValidateModule() {
   WasmFunctionBuilder* start = module_builder_->AddFunction();
   module_builder_->MarkStartFunction(start);
   for (auto global_import : global_imports_) {
-    if (global_import.needs_init) {
-      start->EmitWithVarInt(kExprGetGlobal, global_import.import_index);
-      start->EmitWithVarInt(kExprSetGlobal,
-                            static_cast<uint32_t>(global_import.global_index +
-                                                  global_imports_.size()));
-    }
+    // TODO(bradnelson): Reuse parse buffer memory / make wasm-module-builder
+    // managed the memory for the import name (currently have to keep our
+    // own memory for it).
+    uint32_t import_index = module_builder_->AddGlobalImport(
+        global_import.import_name,
+        static_cast<int>(global_import.import_name_size),
+        global_import.value_type);
+    start->EmitWithVarInt(kExprGetGlobal, import_index);
+    start->EmitWithVarInt(kExprSetGlobal, VarIndex(global_import.var_info));
   }
   start->Emit(kExprEnd);
   FunctionSig::Builder b(zone(), 0, 0);
@@ -569,8 +550,9 @@ bool AsmJsParser::ValidateModuleVarImport(VarInfo* info,
       return true;
     }
     info->kind = VarKind::kImportedFunction;
-    function_import_info_.resize(function_import_info_.size() + 1);
-    info->import = &function_import_info_.back();
+    info->import =
+        new (zone()->New(sizeof(FunctionImportInfo))) FunctionImportInfo(
+            {nullptr, 0, WasmModuleBuilder::SignatureMap(zone())});
     // TODO(bradnelson): Refactor memory management here.
     // AsmModuleBuilder should really own import names.
     info->import->function_name = zone()->NewArray<char>(import_name.size());
@@ -589,7 +571,8 @@ void AsmJsParser::ValidateModuleVarNewStdlib(VarInfo* info) {
   switch (Consume()) {
 #define V(name, _junk1, _junk2, _junk3)                          \
   case TOK(name):                                                \
-    info->DeclareStdlibFunc(VarKind::kSpecial, AsmType::name()); \
+    DeclareStdlibFunc(info, VarKind::kSpecial, AsmType::name()); \
+    stdlib_uses_.insert(AsmTyper::k##name);                      \
     break;
     STDLIB_ARRAY_TYPE_LIST(V)
 #undef V
@@ -608,17 +591,17 @@ void AsmJsParser::ValidateModuleVarStdlib(VarInfo* info) {
   if (Check(TOK(Math))) {
     EXPECT_TOKEN('.');
     switch (Consume()) {
-#define V(name)                                             \
+#define V(name, const_value)                                \
   case TOK(name):                                           \
     DeclareGlobal(info, false, AsmType::Double(), kWasmF64, \
-                  WasmInitExpr(M_##name));                  \
+                  WasmInitExpr(const_value));               \
     stdlib_uses_.insert(AsmTyper::kMath##name);             \
     break;
       STDLIB_MATH_VALUE_LIST(V)
 #undef V
 #define V(name, Name, op, sig)                                      \
   case TOK(name):                                                   \
-    info->DeclareStdlibFunc(VarKind::kMath##Name, stdlib_##sig##_); \
+    DeclareStdlibFunc(info, VarKind::kMath##Name, stdlib_##sig##_); \
     stdlib_uses_.insert(AsmTyper::kMath##Name);                     \
     break;
       STDLIB_MATH_FUNCTION_LIST(V)
@@ -1217,20 +1200,20 @@ void AsmJsParser::ForStatement() {
     current_function_builder_->EmitWithU8(kExprBrIf, 1);
   }
   EXPECT_TOKEN(';');
-  // Stash away INCREMENT
-  size_t increment_position = current_function_builder_->GetPosition();
-  if (!Peek(')')) {
-    RECURSE(Expression(nullptr));
-  }
-  std::vector<byte> increment_code;
-  current_function_builder_->StashCode(&increment_code, increment_position);
+  // Race past INCREMENT
+  size_t increment_position = scanner_.Position();
+  ScanToClosingParenthesis();
   EXPECT_TOKEN(')');
   //       BODY
   RECURSE(ValidateStatement());
   //       INCREMENT
-  current_function_builder_->EmitCode(
-      increment_code.data(), static_cast<uint32_t>(increment_code.size()));
+  size_t end_position = scanner_.Position();
+  scanner_.Seek(increment_position);
+  if (!Peek(')')) {
+    RECURSE(Expression(nullptr));
+  }
   current_function_builder_->EmitWithU8(kExprBr, 0);
+  scanner_.Seek(end_position);
   //   }
   End();
   // }
@@ -1300,7 +1283,8 @@ void AsmJsParser::SwitchStatement() {
   pending_label_ = 0;
   // TODO(bradnelson): Make less weird.
   std::vector<int32_t> cases;
-  GatherCases(&cases);  // Skips { implicitly.
+  GatherCases(&cases);
+  EXPECT_TOKEN('{');
   size_t count = cases.size() + 1;
   for (size_t i = 0; i < count; ++i) {
     BareBegin(BlockKind::kOther);
@@ -1533,6 +1517,9 @@ AsmType* AsmJsParser::AssignmentExpression() {
       if (info->kind == VarKind::kLocal) {
         current_function_builder_->EmitTeeLocal(info->index);
       } else if (info->kind == VarKind::kGlobal) {
+        if (!info->mutable_variable) {
+          FAILn("Expected mutable variable in assignment");
+        }
         current_function_builder_->EmitWithVarUint(kExprSetGlobal,
                                                    VarIndex(info));
         current_function_builder_->EmitWithVarUint(kExprGetGlobal,
@@ -1945,25 +1932,35 @@ AsmType* AsmJsParser::BitwiseXORExpression() {
 // 6.8.15 BitwiseORExpression
 AsmType* AsmJsParser::BitwiseORExpression() {
   AsmType* a = nullptr;
+  call_coercion_deferred_position_ = scanner_.Position();
   RECURSEn(a = BitwiseXORExpression());
   while (Check('|')) {
-    // TODO(bradnelson): Make it prettier.
     AsmType* b = nullptr;
+    // Remember whether the first operand to this OR-expression has requested
+    // deferred validation of the |0 annotation.
+    // NOTE: This has to happen here to work recursively.
+    bool requires_zero = call_coercion_deferred_->IsExactly(AsmType::Signed());
+    call_coercion_deferred_ = nullptr;
+    // TODO(bradnelson): Make it prettier.
     bool zero = false;
-    int old_pos;
+    size_t old_pos;
     size_t old_code;
-    if (CheckForZero()) {
-      old_pos = scanner_.GetPosition();
+    if (a->IsA(AsmType::Intish()) && CheckForZero()) {
+      old_pos = scanner_.Position();
       old_code = current_function_builder_->GetPosition();
       scanner_.Rewind();
       zero = true;
     }
     RECURSEn(b = BitwiseXORExpression());
     // Handle |0 specially.
-    if (zero && old_pos == scanner_.GetPosition()) {
-      current_function_builder_->StashCode(nullptr, old_code);
+    if (zero && old_pos == scanner_.Position()) {
+      current_function_builder_->DeleteCodeAfter(old_code);
       a = AsmType::Signed();
       continue;
+    }
+    // Anything not matching |0 breaks the lookahead in {ValidateCall}.
+    if (requires_zero) {
+      FAILn("Expected |0 type annotation for call");
     }
     if (a->IsA(AsmType::Intish()) && b->IsA(AsmType::Intish())) {
       current_function_builder_->Emit(kExprI32Ior);
@@ -1972,6 +1969,7 @@ AsmType* AsmJsParser::BitwiseORExpression() {
       FAILn("Expected intish for operator |.");
     }
   }
+  DCHECK_NULL(call_coercion_deferred_);
   return a;
 }
 
@@ -2026,6 +2024,7 @@ AsmType* AsmJsParser::ValidateCall() {
   call_coercion_ = nullptr;
   int call_pos = static_cast<int>(scanner_.Position());
   int to_number_pos = static_cast<int>(call_coercion_position_);
+  bool allow_peek = (call_coercion_deferred_position_ == scanner_.Position());
   AsmJsScanner::token_t function_name = Consume();
 
   // Distinguish between ordinary function calls and function table calls. In
@@ -2109,12 +2108,30 @@ AsmType* AsmJsParser::ValidateCall() {
   }
   EXPECT_TOKENn(')');
 
+  // Reload {VarInfo} after parsing arguments as table might have grown.
+  VarInfo* function_info = GetVarInfo(function_name);
+
   // We potentially use lookahead in order to determine the return type in case
-  // it is not yet clear from the call context.
-  // TODO(mstarzinger,6183): Several issues with look-ahead are known. Fix!
-  // TODO(bradnelson): clarify how this binds, and why only float?
-  if (Peek('|') &&
+  // it is not yet clear from the call context. Special care has to be taken to
+  // ensure the non-contextual lookahead is valid. The following restrictions
+  // substantiate the validity of the lookahead implemented below:
+  //  - All calls (except stdlib calls) require some sort of type annotation.
+  //  - The coercion to "signed" is part of the {BitwiseORExpression}, any
+  //    intermittent expressions like parenthesis in `(callsite(..))|0` are
+  //    syntactically not considered coercions.
+  //  - The coercion to "double" as part of the {UnaryExpression} has higher
+  //    precedence and wins in `+callsite(..)|0` cases. Only "float" return
+  //    types are overridden in `fround(callsite(..)|0)` expressions.
+  //  - Expected coercions to "signed" are flagged via {call_coercion_deferred}
+  //    and later on validated as part of {BitwiseORExpression} to ensure they
+  //    indeed apply to the current call expression.
+  //  - The deferred validation is only allowed if {BitwiseORExpression} did
+  //    promise to fulfill the request via {call_coercion_deferred_position}.
+  if (allow_peek && Peek('|') &&
+      function_info->kind <= VarKind::kImportedFunction &&
       (return_type == nullptr || return_type->IsA(AsmType::Float()))) {
+    DCHECK_NULL(call_coercion_deferred_);
+    call_coercion_deferred_ = AsmType::Signed();
     to_number_pos = static_cast<int>(scanner_.Position());
     return_type = AsmType::Signed();
   } else if (return_type == nullptr) {
@@ -2136,8 +2153,6 @@ AsmType* AsmJsParser::ValidateCall() {
   // Emit actual function invocation depending on the kind. At this point we
   // also determined the complete function type and can perform checking against
   // the expected type or update the expected type in case of first occurrence.
-  // Reload {VarInfo} as table might have grown.
-  VarInfo* function_info = GetVarInfo(function_name);
   if (function_info->kind == VarKind::kImportedFunction) {
     for (auto t : param_specific_types) {
       if (!t->IsA(AsmType::Extern())) {
@@ -2149,16 +2164,16 @@ AsmType* AsmJsParser::ValidateCall() {
     }
     DCHECK(function_info->import != nullptr);
     // TODO(bradnelson): Factor out.
-    uint32_t cache_index = function_info->import->cache.FindOrInsert(sig);
     uint32_t index;
-    if (cache_index >= function_info->import->cache_index.size()) {
+    auto it = function_info->import->cache.find(sig);
+    if (it != function_info->import->cache.end()) {
+      index = it->second;
+    } else {
       index = module_builder_->AddImport(
           function_info->import->function_name,
           static_cast<uint32_t>(function_info->import->function_name_size),
           sig);
-      function_info->import->cache_index.push_back(index);
-    } else {
-      index = function_info->import->cache_index[cache_index];
+      function_info->import->cache[sig] = index;
     }
     current_function_builder_->AddAsmWasmOffset(call_pos, to_number_pos);
     current_function_builder_->Emit(kExprCallFunction);
@@ -2409,8 +2424,25 @@ void AsmJsParser::ValidateFloatCoercion() {
   EXPECT_TOKEN(')');
 }
 
+void AsmJsParser::ScanToClosingParenthesis() {
+  int depth = 0;
+  for (;;) {
+    if (Peek('(')) {
+      ++depth;
+    } else if (Peek(')')) {
+      --depth;
+      if (depth < 0) {
+        break;
+      }
+    } else if (Peek(AsmJsScanner::kEndOfInput)) {
+      break;
+    }
+    scanner_.Next();
+  }
+}
+
 void AsmJsParser::GatherCases(std::vector<int32_t>* cases) {
-  int start = scanner_.GetPosition();
+  size_t start = scanner_.Position();
   int depth = 0;
   for (;;) {
     if (Peek('{')) {

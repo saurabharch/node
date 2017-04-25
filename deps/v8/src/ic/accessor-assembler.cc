@@ -984,15 +984,7 @@ void AccessorAssembler::HandleStoreFieldAndReturn(Node* handler_word,
   BIND(&if_out_of_object);
   {
     if (transition_to_field) {
-      Label storage_extended(this);
-      GotoIfNot(IsSetWord<StoreHandler::ExtendStorageBits>(handler_word),
-                &storage_extended);
-      Comment("[ Extend storage");
-      ExtendPropertiesBackingStore(holder);
-      Comment("] Extend storage");
-      Goto(&storage_extended);
-
-      BIND(&storage_extended);
+      ExtendPropertiesBackingStore(holder, handler_word);
     }
 
     StoreNamedField(handler_word, holder, false, representation, prepared_value,
@@ -1053,13 +1045,26 @@ Node* AccessorAssembler::PrepareValueForStore(Node* handler_word, Node* holder,
   return value;
 }
 
-void AccessorAssembler::ExtendPropertiesBackingStore(Node* object) {
+void AccessorAssembler::ExtendPropertiesBackingStore(Node* object,
+                                                     Node* handler_word) {
+  Label done(this);
+  GotoIfNot(IsSetWord<StoreHandler::ExtendStorageBits>(handler_word), &done);
+  Comment("[ Extend storage");
+
   ParameterMode mode = OptimalParameterMode();
 
   Node* properties = LoadProperties(object);
   Node* length = (mode == INTPTR_PARAMETERS)
                      ? LoadAndUntagFixedArrayBaseLength(properties)
                      : LoadFixedArrayBaseLength(properties);
+
+  // Previous property deletion could have left behind unused backing store
+  // capacity even for a map that think it doesn't have any unused fields.
+  // Perform a bounds check to see if we actually have to grow the array.
+  Node* offset = DecodeWord<StoreHandler::FieldOffsetBits>(handler_word);
+  Node* size = ElementOffsetFromIndex(length, FAST_ELEMENTS, mode,
+                                      FixedArray::kHeaderSize);
+  GotoIf(UintPtrLessThan(offset, size), &done);
 
   Node* delta = IntPtrOrSmiConstant(JSObject::kFieldsAdded, mode);
   Node* new_capacity = IntPtrOrSmiAdd(length, delta, mode);
@@ -1088,6 +1093,10 @@ void AccessorAssembler::ExtendPropertiesBackingStore(Node* object) {
                          SKIP_WRITE_BARRIER, mode);
 
   StoreObjectField(object, JSObject::kPropertiesOffset, new_properties);
+  Comment("] Extend storage");
+  Goto(&done);
+
+  BIND(&done);
 }
 
 void AccessorAssembler::StoreNamedField(Node* handler_word, Node* object,
@@ -2090,15 +2099,15 @@ void AccessorAssembler::KeyedLoadICGeneric(const LoadICParameters* p) {
   VARIABLE(var_index, MachineType::PointerRepresentation());
   VARIABLE(var_unique, MachineRepresentation::kTagged);
   var_unique.Bind(p->name);  // Dummy initialization.
-  Label if_index(this), if_unique_name(this), slow(this);
+  Label if_index(this), if_unique_name(this), if_notunique(this), slow(this);
 
   Node* receiver = p->receiver;
   GotoIf(TaggedIsSmi(receiver), &slow);
   Node* receiver_map = LoadMap(receiver);
   Node* instance_type = LoadMapInstanceType(receiver_map);
 
-  TryToName(p->name, &if_index, &var_index, &if_unique_name, &var_unique,
-            &slow);
+  TryToName(p->name, &if_index, &var_index, &if_unique_name, &var_unique, &slow,
+            &if_notunique);
 
   BIND(&if_index);
   {
@@ -2110,6 +2119,22 @@ void AccessorAssembler::KeyedLoadICGeneric(const LoadICParameters* p) {
   {
     GenericPropertyLoad(receiver, receiver_map, instance_type,
                         var_unique.value(), p, &slow);
+  }
+
+  BIND(&if_notunique);
+  {
+    if (FLAG_internalize_on_the_fly) {
+      Label not_in_string_table(this);
+      TryInternalizeString(p->name, &if_index, &var_index, &if_unique_name,
+                           &var_unique, &not_in_string_table, &slow);
+
+      BIND(&not_in_string_table);
+      // If the string was not found in the string table, then no object can
+      // have a property with that name.
+      Return(UndefinedConstant());
+    } else {
+      Goto(&slow);
+    }
   }
 
   BIND(&slow);

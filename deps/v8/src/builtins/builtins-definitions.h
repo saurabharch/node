@@ -243,6 +243,8 @@ namespace internal {
   CPP(UnsupportedThrower)                                                      \
   TFJ(ReturnReceiver, 0)                                                       \
                                                                                \
+  TFS(DeleteProperty, kObject, kKey, kLanguageMode)                            \
+                                                                               \
   /* Array */                                                                  \
   ASM(ArrayCode)                                                               \
   ASM(InternalArrayCode)                                                       \
@@ -344,6 +346,32 @@ namespace internal {
   CPP(CallSitePrototypeIsNative)                                               \
   CPP(CallSitePrototypeIsToplevel)                                             \
   CPP(CallSitePrototypeToString)                                               \
+                                                                               \
+  /* Console */                                                                \
+  CPP(ConsoleDebug)                                                            \
+  CPP(ConsoleError)                                                            \
+  CPP(ConsoleInfo)                                                             \
+  CPP(ConsoleLog)                                                              \
+  CPP(ConsoleWarn)                                                             \
+  CPP(ConsoleDir)                                                              \
+  CPP(ConsoleDirXml)                                                           \
+  CPP(ConsoleTable)                                                            \
+  CPP(ConsoleTrace)                                                            \
+  CPP(ConsoleGroup)                                                            \
+  CPP(ConsoleGroupCollapsed)                                                   \
+  CPP(ConsoleGroupEnd)                                                         \
+  CPP(ConsoleClear)                                                            \
+  CPP(ConsoleCount)                                                            \
+  CPP(ConsoleAssert)                                                           \
+  TFJ(FastConsoleAssert, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
+  CPP(ConsoleMarkTimeline)                                                     \
+  CPP(ConsoleProfile)                                                          \
+  CPP(ConsoleProfileEnd)                                                       \
+  CPP(ConsoleTimeline)                                                         \
+  CPP(ConsoleTimelineEnd)                                                      \
+  CPP(ConsoleTime)                                                             \
+  CPP(ConsoleTimeEnd)                                                          \
+  CPP(ConsoleTimeStamp)                                                        \
                                                                                \
   /* DataView */                                                               \
   CPP(DataViewConstructor)                                                     \
@@ -952,12 +980,6 @@ namespace internal {
   TFJ(AsyncGeneratorAwaitResolveClosure, 1, kValue)                            \
   TFJ(AsyncGeneratorAwaitRejectClosure, 1, kValue)                             \
                                                                                \
-  /* GeneratorYield (proposal-async-iteration/#sec-generatoryield) with */     \
-  /* resume behaviour specific to Async Generators. Internal / not exposed */  \
-  /* to JS code. */                                                            \
-  TFJ(AsyncGeneratorYield, 1, kValue)                                          \
-  TFJ(AsyncGeneratorRawYield, 1, kValue)                                       \
-                                                                               \
   /* Async-from-Sync Iterator */                                               \
                                                                                \
   /* %AsyncFromSyncIteratorPrototype% */                                       \
@@ -971,23 +993,23 @@ namespace internal {
   /* #sec-async-iterator-value-unwrap-functions */                             \
   TFJ(AsyncIteratorValueUnwrap, 1, kValue)
 
-#ifdef V8_I18N_SUPPORT
+#ifdef V8_INTL_SUPPORT
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG) \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
                                                              \
   /* ES #sec-string.prototype.tolowercase */                 \
-  CPP(StringPrototypeToLowerCaseI18N)                        \
+  CPP(StringPrototypeToLowerCaseIntl)                        \
   /* ES #sec-string.prototype.touppercase */                 \
-  CPP(StringPrototypeToUpperCaseI18N)                        \
+  CPP(StringPrototypeToUpperCaseIntl)                        \
   /* ES #sec-string.prototype.normalize */                   \
-  CPP(StringPrototypeNormalizeI18N)
+  CPP(StringPrototypeNormalizeIntl)
 #else
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG) \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
                                                              \
-  /* (obsolete) Unibrow version */                           \
+  /* no-op fallback version */                               \
   CPP(StringPrototypeNormalize)
-#endif  // V8_I18N_SUPPORT
+#endif  // V8_INTL_SUPPORT
 
 #define BUILTIN_PROMISE_REJECTION_PREDICTION_LIST(V) \
   V(AsyncFromSyncIteratorPrototypeNext)              \

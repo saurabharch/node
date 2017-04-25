@@ -2938,6 +2938,7 @@ THREADED_TEST(SymbolProperties) {
   v8::Local<v8::Symbol> sym1 = v8::Symbol::New(isolate);
   v8::Local<v8::Symbol> sym2 = v8::Symbol::New(isolate, v8_str("my-symbol"));
   v8::Local<v8::Symbol> sym3 = v8::Symbol::New(isolate, v8_str("sym3"));
+  v8::Local<v8::Symbol> sym4 = v8::Symbol::New(isolate, v8_str("native"));
 
   CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
 
@@ -3023,6 +3024,23 @@ THREADED_TEST(SymbolProperties) {
             .ToLocalChecked()
             ->Equals(env.local(), v8::Integer::New(isolate, 42))
             .FromJust());
+
+  CHECK(obj->SetNativeDataProperty(env.local(), sym4, SymbolAccessorGetter)
+            .FromJust());
+  CHECK(obj->Get(env.local(), sym4).ToLocalChecked()->IsUndefined());
+  CHECK(obj->Set(env.local(), v8_str("accessor_native"),
+                 v8::Integer::New(isolate, 123))
+            .FromJust());
+  CHECK_EQ(123, obj->Get(env.local(), sym4)
+                    .ToLocalChecked()
+                    ->Int32Value(env.local())
+                    .FromJust());
+  CHECK(obj->Set(env.local(), sym4, v8::Integer::New(isolate, 314)).FromJust());
+  CHECK(obj->Get(env.local(), sym4)
+            .ToLocalChecked()
+            ->Equals(env.local(), v8::Integer::New(isolate, 314))
+            .FromJust());
+  CHECK(obj->Delete(env.local(), v8_str("accessor_native")).FromJust());
 
   // Add another property and delete it afterwards to force the object in
   // slow case.
@@ -3357,6 +3375,15 @@ static void CheckWellKnownSymbol(v8::Local<v8::Symbol>(*getter)(v8::Isolate*),
 THREADED_TEST(WellKnownSymbols) {
   CheckWellKnownSymbol(v8::Symbol::GetIterator, "Symbol.iterator");
   CheckWellKnownSymbol(v8::Symbol::GetUnscopables, "Symbol.unscopables");
+  CheckWellKnownSymbol(v8::Symbol::GetHasInstance, "Symbol.hasInstance");
+  CheckWellKnownSymbol(v8::Symbol::GetIsConcatSpreadable,
+                       "Symbol.isConcatSpreadable");
+  CheckWellKnownSymbol(v8::Symbol::GetMatch, "Symbol.match");
+  CheckWellKnownSymbol(v8::Symbol::GetReplace, "Symbol.replace");
+  CheckWellKnownSymbol(v8::Symbol::GetSearch, "Symbol.search");
+  CheckWellKnownSymbol(v8::Symbol::GetSplit, "Symbol.split");
+  CheckWellKnownSymbol(v8::Symbol::GetToPrimitive, "Symbol.toPrimitive");
+  CheckWellKnownSymbol(v8::Symbol::GetToStringTag, "Symbol.toStringTag");
 }
 
 
@@ -6222,6 +6249,63 @@ THREADED_TEST(TypeOf) {
   CHECK(fun->TypeOf(isolate)
             ->Equals(context.local(), v8_str("function"))
             .FromJust());
+}
+
+THREADED_TEST(InstanceOf) {
+  LocalContext env;
+  v8::HandleScope scope(env->GetIsolate());
+  CompileRun(
+      "var A = {};"
+      "var B = {};"
+      "var C = {};"
+      "B.__proto__ = A;"
+      "C.__proto__ = B;"
+      "function F() {}"
+      "F.prototype = A;"
+      "var G = { [Symbol.hasInstance] : null};"
+      "var H = { [Symbol.hasInstance] : () => { throw new Error(); } };"
+      "var J = { [Symbol.hasInstance] : () => true };"
+      "class K {}"
+      "var D = new K;"
+      "class L extends K {}"
+      "var E = new L");
+
+  v8::Local<v8::Object> f = v8::Local<v8::Object>::Cast(CompileRun("F"));
+  v8::Local<v8::Object> g = v8::Local<v8::Object>::Cast(CompileRun("G"));
+  v8::Local<v8::Object> h = v8::Local<v8::Object>::Cast(CompileRun("H"));
+  v8::Local<v8::Object> j = v8::Local<v8::Object>::Cast(CompileRun("J"));
+  v8::Local<v8::Object> k = v8::Local<v8::Object>::Cast(CompileRun("K"));
+  v8::Local<v8::Object> l = v8::Local<v8::Object>::Cast(CompileRun("L"));
+  v8::Local<v8::Value> a = v8::Local<v8::Value>::Cast(CompileRun("A"));
+  v8::Local<v8::Value> b = v8::Local<v8::Value>::Cast(CompileRun("B"));
+  v8::Local<v8::Value> c = v8::Local<v8::Value>::Cast(CompileRun("C"));
+  v8::Local<v8::Value> d = v8::Local<v8::Value>::Cast(CompileRun("D"));
+  v8::Local<v8::Value> e = v8::Local<v8::Value>::Cast(CompileRun("E"));
+
+  v8::TryCatch try_catch(env->GetIsolate());
+  CHECK(!a->InstanceOf(env.local(), f).ToChecked());
+  CHECK(b->InstanceOf(env.local(), f).ToChecked());
+  CHECK(c->InstanceOf(env.local(), f).ToChecked());
+  CHECK(!d->InstanceOf(env.local(), f).ToChecked());
+  CHECK(!e->InstanceOf(env.local(), f).ToChecked());
+  CHECK(!try_catch.HasCaught());
+
+  CHECK(a->InstanceOf(env.local(), g).IsNothing());
+  CHECK(try_catch.HasCaught());
+  try_catch.Reset();
+
+  CHECK(b->InstanceOf(env.local(), h).IsNothing());
+  CHECK(try_catch.HasCaught());
+  try_catch.Reset();
+
+  CHECK(v8_num(1)->InstanceOf(env.local(), j).ToChecked());
+  CHECK(!try_catch.HasCaught());
+
+  CHECK(d->InstanceOf(env.local(), k).ToChecked());
+  CHECK(e->InstanceOf(env.local(), k).ToChecked());
+  CHECK(!d->InstanceOf(env.local(), l).ToChecked());
+  CHECK(e->InstanceOf(env.local(), l).ToChecked());
+  CHECK(!try_catch.HasCaught());
 }
 
 THREADED_TEST(MultiRun) {
@@ -17080,7 +17164,7 @@ TEST(ErrorLevelWarning) {
     i::Handle<i::JSMessageObject> message =
         i::MessageHandler::MakeMessageObject(
             i_isolate, i::MessageTemplate::kAsmJsInvalid, &location, msg,
-            i::Handle<i::JSArray>::null());
+            i::Handle<i::FixedArray>::null());
     message->set_error_level(levels[i]);
     expected_error_level = levels[i];
     i::MessageHandler::ReportMessage(i_isolate, &location, message);
@@ -22780,10 +22864,12 @@ TEST(AccessCheckThrows) {
   CheckCorrectThrow("%GetProperty(other, 'x')");
   CheckCorrectThrow("%SetProperty(other, 'x', 'foo', 0)");
   CheckCorrectThrow("%AddNamedProperty(other, 'x', 'foo', 1)");
-  CheckCorrectThrow("%DeleteProperty_Sloppy(other, 'x')");
-  CheckCorrectThrow("%DeleteProperty_Strict(other, 'x')");
-  CheckCorrectThrow("%DeleteProperty_Sloppy(other, '1')");
-  CheckCorrectThrow("%DeleteProperty_Strict(other, '1')");
+  STATIC_ASSERT(i::SLOPPY == 0);
+  STATIC_ASSERT(i::STRICT == 1);
+  CheckCorrectThrow("%DeleteProperty(other, 'x', 0)");  // 0 == SLOPPY
+  CheckCorrectThrow("%DeleteProperty(other, 'x', 1)");  // 1 == STRICT
+  CheckCorrectThrow("%DeleteProperty(other, '1', 0)");
+  CheckCorrectThrow("%DeleteProperty(other, '1', 1)");
   CheckCorrectThrow("Object.prototype.hasOwnProperty.call(other, 'x')");
   CheckCorrectThrow("%HasProperty(other, 'x')");
   CheckCorrectThrow("Object.prototype.propertyIsEnumerable(other, 'x')");
@@ -26470,4 +26556,19 @@ TEST(DeterministicRandomNumberGeneration) {
   CHECK_EQ(first_value, second_value);
 
   v8::internal::FLAG_random_seed = previous_seed;
+}
+
+UNINITIALIZED_TEST(AllowAtomicsWait) {
+  using namespace i;
+  v8::Isolate::CreateParams create_params;
+  create_params.allow_atomics_wait = false;
+  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
+  {
+    CHECK_EQ(false, i_isolate->allow_atomics_wait());
+    isolate->SetAllowAtomicsWait(true);
+    CHECK_EQ(true, i_isolate->allow_atomics_wait());
+  }
+  isolate->Dispose();
 }

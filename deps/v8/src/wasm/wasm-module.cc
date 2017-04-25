@@ -135,8 +135,7 @@ Handle<Script> CreateWasmScript(Isolate* isolate,
                                 const ModuleWireBytes& wire_bytes) {
   Handle<Script> script =
       isolate->factory()->NewScript(isolate->factory()->empty_string());
-  FixedArray* array = isolate->native_context()->embedder_data();
-  script->set_context_data(array->get(v8::Context::kDebugIdIndex));
+  script->set_context_data(isolate->native_context()->debug_context_id());
   script->set_type(Script::TYPE_WASM);
 
   int hash = StringHasher::HashSequentialString(
@@ -1952,9 +1951,11 @@ class InstantiationHelper {
           Handle<WasmMemoryObject> memory_object;
           if (!instance->has_memory_object()) {
             // If there was no imported WebAssembly.Memory object, create one.
-            Handle<JSArrayBuffer> buffer(instance->memory_buffer(), isolate_);
             memory_object = WasmMemoryObject::New(
-                isolate_, buffer,
+                isolate_,
+                (instance->has_memory_buffer())
+                    ? handle(instance->memory_buffer())
+                    : Handle<JSArrayBuffer>::null(),
                 (module_->max_mem_pages != 0) ? module_->max_mem_pages : -1);
             instance->set_memory_object(*memory_object);
           } else {
@@ -3001,6 +3002,20 @@ class AsyncCompileJob {
 
 void wasm::AsyncCompile(Isolate* isolate, Handle<JSPromise> promise,
                         const ModuleWireBytes& bytes) {
+  if (!FLAG_wasm_async_compilation) {
+    ErrorThrower thrower(isolate, "WasmCompile");
+    // Compile the module.
+    MaybeHandle<WasmModuleObject> module_object =
+        SyncCompile(isolate, &thrower, bytes);
+    if (thrower.error()) {
+      RejectPromise(isolate, handle(isolate->context()), &thrower, promise);
+      return;
+    }
+    Handle<WasmModuleObject> module = module_object.ToHandleChecked();
+    ResolvePromise(isolate, handle(isolate->context()), promise, module);
+    return;
+  }
+
   // Make a copy of the wire bytes in case the user program changes them
   // during asynchronous compilation.
   std::unique_ptr<byte[]> copy(new byte[bytes.length()]);
@@ -3200,7 +3215,7 @@ MaybeHandle<Code> LazyCompilationOrchestrator::CompileLazy(
     DisallowHeapAllocation no_gc;
     SeqOneByteString* module_bytes = compiled_module->module_bytes();
     SourcePositionTableIterator source_pos_iterator(
-        caller->source_position_table());
+        caller->SourcePositionTable());
     DCHECK_EQ(2, caller->deoptimization_data()->length());
     int caller_func_index =
         Smi::cast(caller->deoptimization_data()->get(1))->value();

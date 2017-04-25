@@ -46,105 +46,51 @@ v8::internal::Vector<uint16_t> ToVector(v8::Local<v8::String> str) {
   return buffer;
 }
 
-class UtilsExtension : public v8::Extension {
+v8::Local<v8::String> ToV8String(v8::Isolate* isolate, const char* str) {
+  return v8::String::NewFromUtf8(isolate, str, v8::NewStringType::kNormal)
+      .ToLocalChecked();
+}
+
+class UtilsExtension : public TaskRunner::SetupGlobalTask {
  public:
-  UtilsExtension()
-      : v8::Extension("v8_inspector/utils",
-                      "native function print();"
-                      "native function quit();"
-                      "native function setlocale();"
-                      "native function read();"
-                      "native function load();"
-                      "native function compileAndRunWithOrigin();"
-                      "native function setCurrentTimeMSForTest();"
-                      "native function setMemoryInfoForTest();"
-                      "native function schedulePauseOnNextStatement();"
-                      "native function cancelPauseOnNextStatement();"
-                      "native function reconnect();"
-                      "native function createContextGroup();") {}
-  virtual v8::Local<v8::FunctionTemplate> GetNativeFunctionTemplate(
-      v8::Isolate* isolate, v8::Local<v8::String> name) {
-    v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    if (name->Equals(context, v8::String::NewFromUtf8(
-                                  isolate, "print", v8::NewStringType::kNormal)
-                                  .ToLocalChecked())
-            .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::Print);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "quit",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::Quit);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "setlocale",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::SetLocale);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "read",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::Read);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "load",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::Load);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "compileAndRunWithOrigin",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate,
-                                       UtilsExtension::CompileAndRunWithOrigin);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "setCurrentTimeMSForTest",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate,
-                                       UtilsExtension::SetCurrentTimeMSForTest);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "setMemoryInfoForTest",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate,
-                                       UtilsExtension::SetMemoryInfoForTest);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(
-                                isolate, "schedulePauseOnNextStatement",
-                                v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, UtilsExtension::SchedulePauseOnNextStatement);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "cancelPauseOnNextStatement",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, UtilsExtension::CancelPauseOnNextStatement);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "reconnect",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, UtilsExtension::Reconnect);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "createContextGroup",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate,
-                                       UtilsExtension::CreateContextGroup);
-    }
-    return v8::Local<v8::FunctionTemplate>();
+  ~UtilsExtension() override = default;
+  void Run(v8::Isolate* isolate,
+           v8::Local<v8::ObjectTemplate> global) override {
+    v8::Local<v8::ObjectTemplate> utils = v8::ObjectTemplate::New(isolate);
+    utils->Set(ToV8String(isolate, "print"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Print));
+    utils->Set(ToV8String(isolate, "quit"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Quit));
+    utils->Set(ToV8String(isolate, "setlocale"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Setlocale));
+    utils->Set(ToV8String(isolate, "read"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Read));
+    utils->Set(ToV8String(isolate, "load"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Load));
+    utils->Set(ToV8String(isolate, "compileAndRunWithOrigin"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::CompileAndRunWithOrigin));
+    utils->Set(ToV8String(isolate, "setCurrentTimeMSForTest"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::SetCurrentTimeMSForTest));
+    utils->Set(ToV8String(isolate, "setMemoryInfoForTest"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::SetMemoryInfoForTest));
+    utils->Set(ToV8String(isolate, "schedulePauseOnNextStatement"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::SchedulePauseOnNextStatement));
+    utils->Set(ToV8String(isolate, "cancelPauseOnNextStatement"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::CancelPauseOnNextStatement));
+    utils->Set(ToV8String(isolate, "reconnect"),
+               v8::FunctionTemplate::New(isolate, &UtilsExtension::Reconnect));
+    utils->Set(ToV8String(isolate, "setLogConsoleApiMessageCalls"),
+               v8::FunctionTemplate::New(
+                   isolate, &UtilsExtension::SetLogConsoleApiMessageCalls));
+    utils->Set(ToV8String(isolate, "createContextGroup"),
+               v8::FunctionTemplate::New(isolate,
+                                         &UtilsExtension::CreateContextGroup));
+    global->Set(ToV8String(isolate, "utils"), utils);
   }
 
   static void set_backend_task_runner(TaskRunner* runner) {
@@ -194,7 +140,7 @@ class UtilsExtension : public v8::Extension {
 
   static void Quit(const v8::FunctionCallbackInfo<v8::Value>& args) { Exit(); }
 
-  static void SetLocale(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  static void Setlocale(const v8::FunctionCallbackInfo<v8::Value>& args) {
     if (args.Length() != 1 || !args[0]->IsString()) {
       fprintf(stderr, "Internal error: setlocale get one string argument.");
       Exit();
@@ -318,24 +264,18 @@ class UtilsExtension : public v8::Extension {
     ready_semaphore.Wait();
   }
 
-  static void CreateContextGroup(
+  static void SetLogConsoleApiMessageCalls(
       const v8::FunctionCallbackInfo<v8::Value>& args) {
-    if (args.Length() != 0) {
-      fprintf(stderr, "Internal error: createContextGroup().");
+    if (args.Length() != 1 || !args[0]->IsBoolean()) {
+      fprintf(stderr, "Internal error: setLogConsoleApiMessageCalls(bool).");
       Exit();
     }
-    const char* backend_extensions[] = {"v8_inspector/setTimeout",
-                                        "v8_inspector/inspector"};
-    v8::ExtensionConfiguration backend_configuration(
-        arraysize(backend_extensions), backend_extensions);
-    v8::base::Semaphore ready_semaphore(0);
-    int context_group_id = 0;
-    inspector_client_->scheduleCreateContextGroup(
-        &backend_configuration, &ready_semaphore, &context_group_id);
-    ready_semaphore.Wait();
-    args.GetReturnValue().Set(
-        v8::Int32::New(args.GetIsolate(), context_group_id));
+    inspector_client_->setLogConsoleApiMessageCalls(
+        args[0].As<v8::Boolean>()->Value());
   }
+
+  static void CreateContextGroup(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
 };
 
 TaskRunner* UtilsExtension::backend_runner_ = nullptr;
@@ -367,15 +307,13 @@ class SetTimeoutTask : public AsyncTask {
   v8::Global<v8::Function> function_;
 };
 
-class SetTimeoutExtension : public v8::Extension {
+class SetTimeoutExtension : public TaskRunner::SetupGlobalTask {
  public:
-  SetTimeoutExtension()
-      : v8::Extension("v8_inspector/setTimeout",
-                      "native function setTimeout();") {}
-
-  virtual v8::Local<v8::FunctionTemplate> GetNativeFunctionTemplate(
-      v8::Isolate* isolate, v8::Local<v8::String> name) {
-    return v8::FunctionTemplate::New(isolate, SetTimeoutExtension::SetTimeout);
+  void Run(v8::Isolate* isolate,
+           v8::Local<v8::ObjectTemplate> global) override {
+    global->Set(
+        ToV8String(isolate, "setTimeout"),
+        v8::FunctionTemplate::New(isolate, &SetTimeoutExtension::SetTimeout));
   }
 
  private:
@@ -413,70 +351,39 @@ bool StrictAccessCheck(v8::Local<v8::Context> accessing_context,
   return accessing_context.IsEmpty();
 }
 
-class InspectorExtension : public v8::Extension {
+class InspectorExtension : public TaskRunner::SetupGlobalTask {
  public:
-  InspectorExtension()
-      : v8::Extension("v8_inspector/inspector",
-                      "native function attachInspector();"
-                      "native function detachInspector();"
-                      "native function setMaxAsyncTaskStacks();"
-                      "native function breakProgram();"
-                      "native function createObjectWithStrictCheck();"
-                      "native function callWithScheduledBreak();"
-                      "native function allowAccessorFormatting();") {}
-
-  virtual v8::Local<v8::FunctionTemplate> GetNativeFunctionTemplate(
-      v8::Isolate* isolate, v8::Local<v8::String> name) {
-    v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    if (name->Equals(context,
-                     v8::String::NewFromUtf8(isolate, "attachInspector",
-                                             v8::NewStringType::kNormal)
-                         .ToLocalChecked())
-            .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, InspectorExtension::Attach);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "detachInspector",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate, InspectorExtension::Detach);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "setMaxAsyncTaskStacks",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, InspectorExtension::SetMaxAsyncTaskStacks);
-    } else if (name->Equals(context,
-                            v8::String::NewFromUtf8(isolate, "breakProgram",
-                                                    v8::NewStringType::kNormal)
-                                .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(isolate,
-                                       InspectorExtension::BreakProgram);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "createObjectWithStrictCheck",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, InspectorExtension::CreateObjectWithStrictCheck);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "callWithScheduledBreak",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, InspectorExtension::CallWithScheduledBreak);
-    } else if (name->Equals(context, v8::String::NewFromUtf8(
-                                         isolate, "allowAccessorFormatting",
-                                         v8::NewStringType::kNormal)
-                                         .ToLocalChecked())
-                   .FromJust()) {
-      return v8::FunctionTemplate::New(
-          isolate, InspectorExtension::AllowAccessorFormatting);
-    }
-    return v8::Local<v8::FunctionTemplate>();
+  ~InspectorExtension() override = default;
+  void Run(v8::Isolate* isolate,
+           v8::Local<v8::ObjectTemplate> global) override {
+    v8::Local<v8::ObjectTemplate> inspector = v8::ObjectTemplate::New(isolate);
+    inspector->Set(
+        ToV8String(isolate, "attachInspector"),
+        v8::FunctionTemplate::New(isolate, &InspectorExtension::Attach));
+    inspector->Set(
+        ToV8String(isolate, "detachInspector"),
+        v8::FunctionTemplate::New(isolate, &InspectorExtension::Detach));
+    inspector->Set(ToV8String(isolate, "setMaxAsyncTaskStacks"),
+                   v8::FunctionTemplate::New(
+                       isolate, &InspectorExtension::SetMaxAsyncTaskStacks));
+    inspector->Set(
+        ToV8String(isolate, "dumpAsyncTaskStacksStateForTest"),
+        v8::FunctionTemplate::New(
+            isolate, &InspectorExtension::DumpAsyncTaskStacksStateForTest));
+    inspector->Set(
+        ToV8String(isolate, "breakProgram"),
+        v8::FunctionTemplate::New(isolate, &InspectorExtension::BreakProgram));
+    inspector->Set(
+        ToV8String(isolate, "createObjectWithStrictCheck"),
+        v8::FunctionTemplate::New(
+            isolate, &InspectorExtension::CreateObjectWithStrictCheck));
+    inspector->Set(ToV8String(isolate, "callWithScheduledBreak"),
+                   v8::FunctionTemplate::New(
+                       isolate, &InspectorExtension::CallWithScheduledBreak));
+    inspector->Set(ToV8String(isolate, "allowAccessorFormatting"),
+                   v8::FunctionTemplate::New(
+                       isolate, &InspectorExtension::AllowAccessorFormatting));
+    global->Set(ToV8String(isolate, "inspector"), inspector);
   }
 
  private:
@@ -517,6 +424,19 @@ class InspectorExtension : public v8::Extension {
     CHECK(inspector);
     v8_inspector::SetMaxAsyncTaskStacksForTest(
         inspector, args[0].As<v8::Int32>()->Value());
+  }
+
+  static void DumpAsyncTaskStacksStateForTest(
+      const v8::FunctionCallbackInfo<v8::Value>& args) {
+    if (args.Length() != 0) {
+      fprintf(stderr, "Internal error: dumpAsyncTaskStacksStateForTest().");
+      Exit();
+    }
+    v8_inspector::V8Inspector* inspector =
+        InspectorClientImpl::InspectorFromContext(
+            args.GetIsolate()->GetCurrentContext());
+    CHECK(inspector);
+    v8_inspector::DumpAsyncTaskStacksStateForTest(inspector);
   }
 
   static void BreakProgram(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -593,6 +513,24 @@ class InspectorExtension : public v8::Extension {
   }
 };
 
+void UtilsExtension::CreateContextGroup(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  if (args.Length() != 0) {
+    fprintf(stderr, "Internal error: createContextGroup().");
+    Exit();
+  }
+  v8::base::Semaphore ready_semaphore(0);
+  int context_group_id = 0;
+  TaskRunner::SetupGlobalTasks setup_global;
+  setup_global.emplace_back(new SetTimeoutExtension());
+  setup_global.emplace_back(new InspectorExtension());
+  inspector_client_->scheduleCreateContextGroup(
+      std::move(setup_global), &ready_semaphore, &context_group_id);
+  ready_semaphore.Wait();
+  args.GetReturnValue().Set(
+      v8::Int32::New(args.GetIsolate(), context_group_id));
+}
+
 v8::Local<v8::String> ToString(v8::Isolate* isolate,
                                const v8_inspector::StringView& string) {
   if (string.is8Bit())
@@ -649,31 +587,22 @@ int main(int argc, char* argv[]) {
   v8::V8::InitializeExternalStartupData(argv[0]);
   v8::V8::Initialize();
 
-  SetTimeoutExtension set_timeout_extension;
-  v8::RegisterExtension(&set_timeout_extension);
-  InspectorExtension inspector_extension;
-  v8::RegisterExtension(&inspector_extension);
-  UtilsExtension utils_extension;
-  v8::RegisterExtension(&utils_extension);
-  SendMessageToBackendExtension send_message_to_backend_extension;
-  v8::RegisterExtension(&send_message_to_backend_extension);
-
   v8::base::Semaphore ready_semaphore(0);
 
-  const char* backend_extensions[] = {"v8_inspector/setTimeout",
-                                      "v8_inspector/inspector"};
-  v8::ExtensionConfiguration backend_configuration(
-      arraysize(backend_extensions), backend_extensions);
-  TaskRunner backend_runner(&backend_configuration, false, &ready_semaphore);
+  TaskRunner::SetupGlobalTasks backend_extensions;
+  backend_extensions.emplace_back(new SetTimeoutExtension());
+  backend_extensions.emplace_back(new InspectorExtension());
+  TaskRunner backend_runner(std::move(backend_extensions), false,
+                            &ready_semaphore);
   ready_semaphore.Wait();
   SendMessageToBackendExtension::set_backend_task_runner(&backend_runner);
   UtilsExtension::set_backend_task_runner(&backend_runner);
 
-  const char* frontend_extensions[] = {"v8_inspector/utils",
-                                       "v8_inspector/frontend"};
-  v8::ExtensionConfiguration frontend_configuration(
-      arraysize(frontend_extensions), frontend_extensions);
-  TaskRunner frontend_runner(&frontend_configuration, true, &ready_semaphore);
+  TaskRunner::SetupGlobalTasks frontend_extensions;
+  frontend_extensions.emplace_back(new UtilsExtension());
+  frontend_extensions.emplace_back(new SendMessageToBackendExtension());
+  TaskRunner frontend_runner(std::move(frontend_extensions), true,
+                             &ready_semaphore);
   ready_semaphore.Wait();
 
   FrontendChannelImpl frontend_channel(&frontend_runner);

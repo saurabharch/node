@@ -501,9 +501,23 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       Node* object, Node* index, Node* value,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
-  Node* BuildAppendJSArray(ElementsKind kind, Node* context, Node* array,
+  // EnsureArrayPushable verifies that receiver is:
+  //   1. Is not a prototype.
+  //   2. Is not a dictionary.
+  //   3. Has a writeable length property.
+  // It returns ElementsKind as a node for further division into cases.
+  Node* EnsureArrayPushable(Node* receiver, Label* bailout);
+
+  void TryStoreArrayElement(ElementsKind kind, ParameterMode mode,
+                            Label* bailout, Node* elements, Node* index,
+                            Node* value);
+  // Consumes args into the array, and returns tagged new length.
+  Node* BuildAppendJSArray(ElementsKind kind, Node* array,
                            CodeStubArguments& args, Variable& arg_index,
                            Label* bailout);
+  // Pushes value onto the end of array.
+  void BuildAppendJSArray(ElementsKind kind, Node* array, Node* value,
+                          Label* bailout);
 
   void StoreFieldsNoWriteBarrier(Node* start_address, Node* end_address,
                                  Node* value);
@@ -663,6 +677,14 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                              Node* capacity, Node* new_capacity,
                              ParameterMode mode, Label* bailout);
 
+  // Given a need to grow by |growth|, allocate an appropriate new capacity
+  // if necessary, and return a new elements FixedArray object. Label |bailout|
+  // is followed for allocation failure.
+  void PossiblyGrowElementsCapacity(ParameterMode mode, ElementsKind kind,
+                                    Node* array, Node* length,
+                                    Variable* var_elements, Node* growth,
+                                    Label* bailout);
+
   // Allocation site manipulation
   void InitializeAllocationMemento(Node* base_allocation,
                                    int base_allocation_size,
@@ -708,6 +730,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsExternalStringInstanceType(Node* instance_type);
   Node* IsShortExternalStringInstanceType(Node* instance_type);
   Node* IsSequentialStringInstanceType(Node* instance_type);
+  Node* IsConsStringInstanceType(Node* instance_type);
   Node* IsString(Node* object);
   Node* IsJSObject(Node* object);
   Node* IsJSGlobalProxy(Node* object);
@@ -749,6 +772,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // ElementsKind helpers:
   Node* IsFastElementsKind(Node* elements_kind);
   Node* IsHoleyFastElementsKind(Node* elements_kind);
+  Node* IsElementsKindGreaterThan(Node* target_kind,
+                                  ElementsKind reference_kind);
 
   // String helpers.
   // Load a character from a String (might flatten a ConsString).
@@ -925,9 +950,24 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void Use(Label* label);
 
   // Various building blocks for stubs doing property lookups.
+
+  // |if_notinternalized| is optional; |if_bailout| will be used by default.
   void TryToName(Node* key, Label* if_keyisindex, Variable* var_index,
-                 Label* if_keyisunique, Variable* var_unique,
-                 Label* if_bailout);
+                 Label* if_keyisunique, Variable* var_unique, Label* if_bailout,
+                 Label* if_notinternalized = nullptr);
+
+  // Performs a hash computation and string table lookup for the given string,
+  // and jumps to:
+  // - |if_index| if the string is an array index like "123"; |var_index|
+  //              will contain the intptr representation of that index.
+  // - |if_internalized| if the string exists in the string table; the
+  //                     internalized version will be in |var_internalized|.
+  // - |if_not_internalized| if the string is not in the string table (but
+  //                         does not add it).
+  // - |if_bailout| for unsupported cases (e.g. uncachable array index).
+  void TryInternalizeString(Node* string, Label* if_index, Variable* var_index,
+                            Label* if_internalized, Variable* var_internalized,
+                            Label* if_not_internalized, Label* if_bailout);
 
   // Calculates array index for given dictionary entry and entry field.
   // See Dictionary::EntryToIndex().
@@ -972,11 +1012,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Stores the value for the entry with the given key_index.
   template <class ContainerType>
-  void StoreValueByKeyIndex(Node* container, Node* key_index, Node* value) {
+  void StoreValueByKeyIndex(
+      Node* container, Node* key_index, Node* value,
+      WriteBarrierMode write_barrier = UPDATE_WRITE_BARRIER) {
     const int kKeyToValueOffset =
         (ContainerType::kEntryValueIndex - ContainerType::kEntryKeyIndex) *
         kPointerSize;
-    StoreFixedArrayElement(container, key_index, value, UPDATE_WRITE_BARRIER,
+    StoreFixedArrayElement(container, key_index, value, write_barrier,
                            kKeyToValueOffset);
   }
 
@@ -984,16 +1026,34 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* HashTableComputeCapacity(Node* at_least_space_for);
 
   template <class Dictionary>
-  Node* GetNumberOfElements(Node* dictionary);
+  Node* GetNumberOfElements(Node* dictionary) {
+    return LoadFixedArrayElement(dictionary,
+                                 Dictionary::kNumberOfElementsIndex);
+  }
 
   template <class Dictionary>
-  void SetNumberOfElements(Node* dictionary, Node* num_elements_smi);
+  void SetNumberOfElements(Node* dictionary, Node* num_elements_smi) {
+    StoreFixedArrayElement(dictionary, Dictionary::kNumberOfElementsIndex,
+                           num_elements_smi, SKIP_WRITE_BARRIER);
+  }
 
   template <class Dictionary>
-  Node* GetNumberOfDeletedElements(Node* dictionary);
+  Node* GetNumberOfDeletedElements(Node* dictionary) {
+    return LoadFixedArrayElement(dictionary,
+                                 Dictionary::kNumberOfDeletedElementsIndex);
+  }
 
   template <class Dictionary>
-  Node* GetCapacity(Node* dictionary);
+  void SetNumberOfDeletedElements(Node* dictionary, Node* num_deleted_smi) {
+    StoreFixedArrayElement(dictionary,
+                           Dictionary::kNumberOfDeletedElementsIndex,
+                           num_deleted_smi, SKIP_WRITE_BARRIER);
+  }
+
+  template <class Dictionary>
+  Node* GetCapacity(Node* dictionary) {
+    return LoadFixedArrayElement(dictionary, Dictionary::kCapacityIndex);
+  }
 
   template <class Dictionary>
   Node* GetNextEnumerationIndex(Node* dictionary);
@@ -1056,6 +1116,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   template <class... TArgs>
   Node* CallBuiltin(Builtins::Name id, Node* context, TArgs... args) {
     return CallStub(Builtins::CallableFor(isolate(), id), context, args...);
+  }
+
+  template <class... TArgs>
+  Node* TailCallBuiltin(Builtins::Name id, Node* context, TArgs... args) {
+    return TailCallStub(Builtins::CallableFor(isolate(), id), context, args...);
   }
 
   void LoadPropertyFromFastObject(Node* object, Node* map, Node* descriptors,
@@ -1123,6 +1188,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Update the type feedback vector.
   void UpdateFeedback(Node* feedback, Node* feedback_vector, Node* slot_id);
+
+  // Check if a property name might require protector invalidation when it is
+  // used for a property store or deletion.
+  void CheckForAssociatedProtector(Node* name, Label* if_protector);
 
   Node* LoadReceiverMap(Node* receiver);
 
@@ -1325,6 +1394,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void DescriptorLookupBinary(Node* unique_name, Node* descriptors, Node* nof,
                               Label* if_found, Variable* var_name_index,
                               Label* if_not_found);
+  // Implements DescriptorArray::ToKeyIndex.
+  // Returns an untagged IntPtr.
+  Node* DescriptorArrayToKeyIndex(Node* descriptor_number);
 
   Node* CallGetterIfAccessor(Node* value, Node* details, Node* context,
                              Node* receiver, Label* if_bailout);
@@ -1368,9 +1440,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Implements DescriptorArray::number_of_entries.
   // Returns an untagged int32.
   Node* DescriptorArrayNumberOfEntries(Node* descriptors);
-  // Implements DescriptorArray::ToKeyIndex.
-  // Returns an untagged IntPtr.
-  Node* DescriptorArrayToKeyIndex(Node* descriptor_number);
   // Implements DescriptorArray::GetSortedKeyIndex.
   // Returns an untagged int32.
   Node* DescriptorArrayGetSortedKeyIndex(Node* descriptors,

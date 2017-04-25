@@ -293,159 +293,161 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
 // NOTE: Everything following JS_VALUE_TYPE is considered a
 // JSObject for GC purposes. The first four entries here have typeof
 // 'object', whereas JS_FUNCTION_TYPE has typeof 'function'.
-#define INSTANCE_TYPE_LIST(V)                                   \
-  V(INTERNALIZED_STRING_TYPE)                                   \
-  V(EXTERNAL_INTERNALIZED_STRING_TYPE)                          \
-  V(ONE_BYTE_INTERNALIZED_STRING_TYPE)                          \
-  V(EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE)                 \
-  V(EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE)       \
-  V(SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE)                    \
-  V(SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE)           \
-  V(SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE) \
-  V(STRING_TYPE)                                                \
-  V(CONS_STRING_TYPE)                                           \
-  V(EXTERNAL_STRING_TYPE)                                       \
-  V(SLICED_STRING_TYPE)                                         \
-  V(THIN_STRING_TYPE)                                           \
-  V(ONE_BYTE_STRING_TYPE)                                       \
-  V(CONS_ONE_BYTE_STRING_TYPE)                                  \
-  V(EXTERNAL_ONE_BYTE_STRING_TYPE)                              \
-  V(SLICED_ONE_BYTE_STRING_TYPE)                                \
-  V(THIN_ONE_BYTE_STRING_TYPE)                                  \
-  V(EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE)                    \
-  V(SHORT_EXTERNAL_STRING_TYPE)                                 \
-  V(SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE)                        \
-  V(SHORT_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE)              \
-                                                                \
-  V(SYMBOL_TYPE)                                                \
-  V(HEAP_NUMBER_TYPE)                                           \
-  V(ODDBALL_TYPE)                                               \
-                                                                \
-  V(MAP_TYPE)                                                   \
-  V(CODE_TYPE)                                                  \
-  V(MUTABLE_HEAP_NUMBER_TYPE)                                   \
-  V(FOREIGN_TYPE)                                               \
-  V(BYTE_ARRAY_TYPE)                                            \
-  V(BYTECODE_ARRAY_TYPE)                                        \
-  V(FREE_SPACE_TYPE)                                            \
-                                                                \
-  V(FIXED_INT8_ARRAY_TYPE)                                      \
-  V(FIXED_UINT8_ARRAY_TYPE)                                     \
-  V(FIXED_INT16_ARRAY_TYPE)                                     \
-  V(FIXED_UINT16_ARRAY_TYPE)                                    \
-  V(FIXED_INT32_ARRAY_TYPE)                                     \
-  V(FIXED_UINT32_ARRAY_TYPE)                                    \
-  V(FIXED_FLOAT32_ARRAY_TYPE)                                   \
-  V(FIXED_FLOAT64_ARRAY_TYPE)                                   \
-  V(FIXED_UINT8_CLAMPED_ARRAY_TYPE)                             \
-                                                                \
-  V(FIXED_DOUBLE_ARRAY_TYPE)                                    \
-  V(FILLER_TYPE)                                                \
-                                                                \
-  V(ACCESSOR_INFO_TYPE)                                         \
-  V(ACCESSOR_PAIR_TYPE)                                         \
-  V(ACCESS_CHECK_INFO_TYPE)                                     \
-  V(INTERCEPTOR_INFO_TYPE)                                      \
-  V(CALL_HANDLER_INFO_TYPE)                                     \
-  V(FUNCTION_TEMPLATE_INFO_TYPE)                                \
-  V(OBJECT_TEMPLATE_INFO_TYPE)                                  \
-  V(ALLOCATION_SITE_TYPE)                                       \
-  V(ALLOCATION_MEMENTO_TYPE)                                    \
-  V(SCRIPT_TYPE)                                                \
-  V(TYPE_FEEDBACK_INFO_TYPE)                                    \
-  V(ALIASED_ARGUMENTS_ENTRY_TYPE)                               \
-  V(PROMISE_RESOLVE_THENABLE_JOB_INFO_TYPE)                     \
-  V(PROMISE_REACTION_JOB_INFO_TYPE)                             \
-  V(DEBUG_INFO_TYPE)                                            \
-  V(BREAK_POINT_INFO_TYPE)                                      \
-  V(STACK_FRAME_INFO_TYPE)                                      \
-  V(PROTOTYPE_INFO_TYPE)                                        \
-  V(TUPLE2_TYPE)                                                \
-  V(TUPLE3_TYPE)                                                \
-  V(CONTEXT_EXTENSION_TYPE)                                     \
-  V(CONSTANT_ELEMENTS_PAIR_TYPE)                                \
-  V(MODULE_TYPE)                                                \
-  V(MODULE_INFO_ENTRY_TYPE)                                     \
-  V(ASYNC_GENERATOR_REQUEST_TYPE)                               \
-  V(FIXED_ARRAY_TYPE)                                           \
-  V(TRANSITION_ARRAY_TYPE)                                      \
-  V(SHARED_FUNCTION_INFO_TYPE)                                  \
-  V(CELL_TYPE)                                                  \
-  V(WEAK_CELL_TYPE)                                             \
-  V(PROPERTY_CELL_TYPE)                                         \
-                                                                \
-  V(JS_PROXY_TYPE)                                              \
-  V(JS_GLOBAL_OBJECT_TYPE)                                      \
-  V(JS_GLOBAL_PROXY_TYPE)                                       \
-  V(JS_SPECIAL_API_OBJECT_TYPE)                                 \
-  V(JS_VALUE_TYPE)                                              \
-  V(JS_MESSAGE_OBJECT_TYPE)                                     \
-  V(JS_DATE_TYPE)                                               \
-  V(JS_API_OBJECT_TYPE)                                         \
-  V(JS_OBJECT_TYPE)                                             \
-  V(JS_ARGUMENTS_TYPE)                                          \
-  V(JS_CONTEXT_EXTENSION_OBJECT_TYPE)                           \
-  V(JS_GENERATOR_OBJECT_TYPE)                                   \
-  V(JS_ASYNC_GENERATOR_OBJECT_TYPE)                             \
-  V(JS_MODULE_NAMESPACE_TYPE)                                   \
-  V(JS_ARRAY_TYPE)                                              \
-  V(JS_ARRAY_BUFFER_TYPE)                                       \
-  V(JS_TYPED_ARRAY_TYPE)                                        \
-  V(JS_DATA_VIEW_TYPE)                                          \
-  V(JS_SET_TYPE)                                                \
-  V(JS_MAP_TYPE)                                                \
-  V(JS_SET_ITERATOR_TYPE)                                       \
-  V(JS_MAP_ITERATOR_TYPE)                                       \
-  V(JS_WEAK_MAP_TYPE)                                           \
-  V(JS_WEAK_SET_TYPE)                                           \
-  V(JS_PROMISE_CAPABILITY_TYPE)                                 \
-  V(JS_PROMISE_TYPE)                                            \
-  V(JS_REGEXP_TYPE)                                             \
-  V(JS_ERROR_TYPE)                                              \
-  V(JS_ASYNC_FROM_SYNC_ITERATOR_TYPE)                           \
-  V(JS_STRING_ITERATOR_TYPE)                                    \
-                                                                \
-  V(JS_TYPED_ARRAY_KEY_ITERATOR_TYPE)                           \
-  V(JS_FAST_ARRAY_KEY_ITERATOR_TYPE)                            \
-  V(JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE)                         \
-                                                                \
-  V(JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)                     \
-  V(JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)                      \
-  V(JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)                    \
-  V(JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)                     \
-  V(JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                    \
-  V(JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                     \
-  V(JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                   \
-  V(JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE)                   \
-  V(JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE)             \
-                                                                \
-  V(JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)                  \
-  V(JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)            \
-  V(JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE)                      \
-  V(JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE)                \
-  V(JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE)               \
-  V(JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE)         \
-  V(JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE)                   \
-                                                                \
-  V(JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE)                         \
-  V(JS_INT8_ARRAY_VALUE_ITERATOR_TYPE)                          \
-  V(JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE)                        \
-  V(JS_INT16_ARRAY_VALUE_ITERATOR_TYPE)                         \
-  V(JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE)                        \
-  V(JS_INT32_ARRAY_VALUE_ITERATOR_TYPE)                         \
-  V(JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE)                       \
-  V(JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE)                       \
-  V(JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE)                 \
-                                                                \
-  V(JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE)                      \
-  V(JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE)                \
-  V(JS_FAST_ARRAY_VALUE_ITERATOR_TYPE)                          \
-  V(JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE)                    \
-  V(JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)                   \
-  V(JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)             \
-  V(JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE)                       \
-                                                                \
-  V(JS_BOUND_FUNCTION_TYPE)                                     \
+#define INSTANCE_TYPE_LIST(V)                                                  \
+  V(INTERNALIZED_STRING_TYPE)                                                  \
+  V(EXTERNAL_INTERNALIZED_STRING_TYPE)                                         \
+  V(ONE_BYTE_INTERNALIZED_STRING_TYPE)                                         \
+  V(EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE)                                \
+  V(EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE)                      \
+  V(SHORT_EXTERNAL_INTERNALIZED_STRING_TYPE)                                   \
+  V(SHORT_EXTERNAL_ONE_BYTE_INTERNALIZED_STRING_TYPE)                          \
+  V(SHORT_EXTERNAL_INTERNALIZED_STRING_WITH_ONE_BYTE_DATA_TYPE)                \
+  V(STRING_TYPE)                                                               \
+  V(CONS_STRING_TYPE)                                                          \
+  V(EXTERNAL_STRING_TYPE)                                                      \
+  V(SLICED_STRING_TYPE)                                                        \
+  V(THIN_STRING_TYPE)                                                          \
+  V(ONE_BYTE_STRING_TYPE)                                                      \
+  V(CONS_ONE_BYTE_STRING_TYPE)                                                 \
+  V(EXTERNAL_ONE_BYTE_STRING_TYPE)                                             \
+  V(SLICED_ONE_BYTE_STRING_TYPE)                                               \
+  V(THIN_ONE_BYTE_STRING_TYPE)                                                 \
+  V(EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE)                                   \
+  V(SHORT_EXTERNAL_STRING_TYPE)                                                \
+  V(SHORT_EXTERNAL_ONE_BYTE_STRING_TYPE)                                       \
+  V(SHORT_EXTERNAL_STRING_WITH_ONE_BYTE_DATA_TYPE)                             \
+                                                                               \
+  V(SYMBOL_TYPE)                                                               \
+  V(HEAP_NUMBER_TYPE)                                                          \
+  V(ODDBALL_TYPE)                                                              \
+                                                                               \
+  V(MAP_TYPE)                                                                  \
+  V(CODE_TYPE)                                                                 \
+  V(MUTABLE_HEAP_NUMBER_TYPE)                                                  \
+  V(FOREIGN_TYPE)                                                              \
+  V(BYTE_ARRAY_TYPE)                                                           \
+  V(BYTECODE_ARRAY_TYPE)                                                       \
+  V(FREE_SPACE_TYPE)                                                           \
+                                                                               \
+  V(FIXED_INT8_ARRAY_TYPE)                                                     \
+  V(FIXED_UINT8_ARRAY_TYPE)                                                    \
+  V(FIXED_INT16_ARRAY_TYPE)                                                    \
+  V(FIXED_UINT16_ARRAY_TYPE)                                                   \
+  V(FIXED_INT32_ARRAY_TYPE)                                                    \
+  V(FIXED_UINT32_ARRAY_TYPE)                                                   \
+  V(FIXED_FLOAT32_ARRAY_TYPE)                                                  \
+  V(FIXED_FLOAT64_ARRAY_TYPE)                                                  \
+  V(FIXED_UINT8_CLAMPED_ARRAY_TYPE)                                            \
+                                                                               \
+  V(FIXED_DOUBLE_ARRAY_TYPE)                                                   \
+  V(FILLER_TYPE)                                                               \
+                                                                               \
+  V(ACCESSOR_INFO_TYPE)                                                        \
+  V(ACCESSOR_PAIR_TYPE)                                                        \
+  V(ACCESS_CHECK_INFO_TYPE)                                                    \
+  V(INTERCEPTOR_INFO_TYPE)                                                     \
+  V(FUNCTION_TEMPLATE_INFO_TYPE)                                               \
+  V(OBJECT_TEMPLATE_INFO_TYPE)                                                 \
+  V(ALLOCATION_SITE_TYPE)                                                      \
+  V(ALLOCATION_MEMENTO_TYPE)                                                   \
+  V(SCRIPT_TYPE)                                                               \
+  V(ALIASED_ARGUMENTS_ENTRY_TYPE)                                              \
+  V(PROMISE_RESOLVE_THENABLE_JOB_INFO_TYPE)                                    \
+  V(PROMISE_REACTION_JOB_INFO_TYPE)                                            \
+  V(DEBUG_INFO_TYPE)                                                           \
+  V(STACK_FRAME_INFO_TYPE)                                                     \
+  V(PROTOTYPE_INFO_TYPE)                                                       \
+  V(TUPLE2_TYPE)                                                               \
+  V(TUPLE3_TYPE)                                                               \
+  V(CONTEXT_EXTENSION_TYPE)                                                    \
+  V(MODULE_TYPE)                                                               \
+  V(MODULE_INFO_ENTRY_TYPE)                                                    \
+  V(ASYNC_GENERATOR_REQUEST_TYPE)                                              \
+  V(FIXED_ARRAY_TYPE)                                                          \
+  V(TRANSITION_ARRAY_TYPE)                                                     \
+  V(SHARED_FUNCTION_INFO_TYPE)                                                 \
+  V(CELL_TYPE)                                                                 \
+  V(WEAK_CELL_TYPE)                                                            \
+  V(PROPERTY_CELL_TYPE)                                                        \
+  /* TODO(yangguo): these padding types are for ABI stability. Remove after*/  \
+  /* version 6.0 branch, or replace them when there is demand for new types.*/ \
+  V(PADDING_TYPE_1)                                                            \
+  V(PADDING_TYPE_2)                                                            \
+  V(PADDING_TYPE_3)                                                            \
+  V(PADDING_TYPE_4)                                                            \
+                                                                               \
+  V(JS_PROXY_TYPE)                                                             \
+  V(JS_GLOBAL_OBJECT_TYPE)                                                     \
+  V(JS_GLOBAL_PROXY_TYPE)                                                      \
+  V(JS_SPECIAL_API_OBJECT_TYPE)                                                \
+  V(JS_VALUE_TYPE)                                                             \
+  V(JS_MESSAGE_OBJECT_TYPE)                                                    \
+  V(JS_DATE_TYPE)                                                              \
+  V(JS_API_OBJECT_TYPE)                                                        \
+  V(JS_OBJECT_TYPE)                                                            \
+  V(JS_ARGUMENTS_TYPE)                                                         \
+  V(JS_CONTEXT_EXTENSION_OBJECT_TYPE)                                          \
+  V(JS_GENERATOR_OBJECT_TYPE)                                                  \
+  V(JS_ASYNC_GENERATOR_OBJECT_TYPE)                                            \
+  V(JS_MODULE_NAMESPACE_TYPE)                                                  \
+  V(JS_ARRAY_TYPE)                                                             \
+  V(JS_ARRAY_BUFFER_TYPE)                                                      \
+  V(JS_TYPED_ARRAY_TYPE)                                                       \
+  V(JS_DATA_VIEW_TYPE)                                                         \
+  V(JS_SET_TYPE)                                                               \
+  V(JS_MAP_TYPE)                                                               \
+  V(JS_SET_ITERATOR_TYPE)                                                      \
+  V(JS_MAP_ITERATOR_TYPE)                                                      \
+  V(JS_WEAK_MAP_TYPE)                                                          \
+  V(JS_WEAK_SET_TYPE)                                                          \
+  V(JS_PROMISE_CAPABILITY_TYPE)                                                \
+  V(JS_PROMISE_TYPE)                                                           \
+  V(JS_REGEXP_TYPE)                                                            \
+  V(JS_ERROR_TYPE)                                                             \
+  V(JS_ASYNC_FROM_SYNC_ITERATOR_TYPE)                                          \
+  V(JS_STRING_ITERATOR_TYPE)                                                   \
+                                                                               \
+  V(JS_TYPED_ARRAY_KEY_ITERATOR_TYPE)                                          \
+  V(JS_FAST_ARRAY_KEY_ITERATOR_TYPE)                                           \
+  V(JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE)                                        \
+                                                                               \
+  V(JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                    \
+  V(JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                     \
+  V(JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                   \
+  V(JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                    \
+  V(JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                   \
+  V(JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                    \
+  V(JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                  \
+  V(JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                  \
+  V(JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE)                            \
+                                                                               \
+  V(JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                 \
+  V(JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)                           \
+  V(JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                     \
+  V(JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE)                               \
+  V(JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE)                              \
+  V(JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE)                        \
+  V(JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE)                                  \
+                                                                               \
+  V(JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE)                                        \
+  V(JS_INT8_ARRAY_VALUE_ITERATOR_TYPE)                                         \
+  V(JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE)                                       \
+  V(JS_INT16_ARRAY_VALUE_ITERATOR_TYPE)                                        \
+  V(JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE)                                       \
+  V(JS_INT32_ARRAY_VALUE_ITERATOR_TYPE)                                        \
+  V(JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE)                                      \
+  V(JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE)                                      \
+  V(JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE)                                \
+                                                                               \
+  V(JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE)                                     \
+  V(JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE)                               \
+  V(JS_FAST_ARRAY_VALUE_ITERATOR_TYPE)                                         \
+  V(JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE)                                   \
+  V(JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)                                  \
+  V(JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)                            \
+  V(JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE)                                      \
+                                                                               \
+  V(JS_BOUND_FUNCTION_TYPE)                                                    \
   V(JS_FUNCTION_TYPE)
 
 // Since string types are not consecutive, this macro is used to
@@ -516,26 +518,22 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(ACCESSOR_PAIR, AccessorPair, accessor_pair)                              \
   V(ACCESS_CHECK_INFO, AccessCheckInfo, access_check_info)                   \
   V(INTERCEPTOR_INFO, InterceptorInfo, interceptor_info)                     \
-  V(CALL_HANDLER_INFO, CallHandlerInfo, call_handler_info)                   \
   V(FUNCTION_TEMPLATE_INFO, FunctionTemplateInfo, function_template_info)    \
   V(OBJECT_TEMPLATE_INFO, ObjectTemplateInfo, object_template_info)          \
   V(ALLOCATION_SITE, AllocationSite, allocation_site)                        \
   V(ALLOCATION_MEMENTO, AllocationMemento, allocation_memento)               \
   V(SCRIPT, Script, script)                                                  \
-  V(TYPE_FEEDBACK_INFO, TypeFeedbackInfo, type_feedback_info)                \
   V(ALIASED_ARGUMENTS_ENTRY, AliasedArgumentsEntry, aliased_arguments_entry) \
   V(PROMISE_RESOLVE_THENABLE_JOB_INFO, PromiseResolveThenableJobInfo,        \
     promise_resolve_thenable_job_info)                                       \
   V(PROMISE_REACTION_JOB_INFO, PromiseReactionJobInfo,                       \
     promise_reaction_job_info)                                               \
   V(DEBUG_INFO, DebugInfo, debug_info)                                       \
-  V(BREAK_POINT_INFO, BreakPointInfo, break_point_info)                      \
   V(STACK_FRAME_INFO, StackFrameInfo, stack_frame_info)                      \
   V(PROTOTYPE_INFO, PrototypeInfo, prototype_info)                           \
   V(TUPLE2, Tuple2, tuple2)                                                  \
   V(TUPLE3, Tuple3, tuple3)                                                  \
   V(CONTEXT_EXTENSION, ContextExtension, context_extension)                  \
-  V(CONSTANT_ELEMENTS_PAIR, ConstantElementsPair, constant_elements_pair)    \
   V(MODULE, Module, module)                                                  \
   V(MODULE_INFO_ENTRY, ModuleInfoEntry, module_info_entry)                   \
   V(ASYNC_GENERATOR_REQUEST, AsyncGeneratorRequest, async_generator_request)
@@ -690,24 +688,20 @@ enum InstanceType {
   ACCESSOR_PAIR_TYPE,
   ACCESS_CHECK_INFO_TYPE,
   INTERCEPTOR_INFO_TYPE,
-  CALL_HANDLER_INFO_TYPE,
   FUNCTION_TEMPLATE_INFO_TYPE,
   OBJECT_TEMPLATE_INFO_TYPE,
   ALLOCATION_SITE_TYPE,
   ALLOCATION_MEMENTO_TYPE,
   SCRIPT_TYPE,
-  TYPE_FEEDBACK_INFO_TYPE,
   ALIASED_ARGUMENTS_ENTRY_TYPE,
   PROMISE_RESOLVE_THENABLE_JOB_INFO_TYPE,
   PROMISE_REACTION_JOB_INFO_TYPE,
   DEBUG_INFO_TYPE,
-  BREAK_POINT_INFO_TYPE,
   STACK_FRAME_INFO_TYPE,
   PROTOTYPE_INFO_TYPE,
   TUPLE2_TYPE,
   TUPLE3_TYPE,
   CONTEXT_EXTENSION_TYPE,
-  CONSTANT_ELEMENTS_PAIR_TYPE,
   MODULE_TYPE,
   MODULE_INFO_ENTRY_TYPE,
   ASYNC_GENERATOR_REQUEST_TYPE,
@@ -717,6 +711,13 @@ enum InstanceType {
   CELL_TYPE,
   WEAK_CELL_TYPE,
   PROPERTY_CELL_TYPE,
+
+  // All the following types are subtypes of JSReceiver, which corresponds to
+  // objects in the JS sense. The first and the last type in this range are
+  PADDING_TYPE_1,
+  PADDING_TYPE_2,
+  PADDING_TYPE_3,
+  PADDING_TYPE_4,
 
   // All the following types are subtypes of JSReceiver, which corresponds to
   // objects in the JS sense. The first and the last type in this range are
@@ -977,128 +978,133 @@ template <class C> inline bool Is(Object* obj);
   V(Primitive)              \
   V(Number)
 
-#define HEAP_OBJECT_TYPE_LIST(V) \
-  V(HeapNumber)                  \
-  V(MutableHeapNumber)           \
-  V(Name)                        \
-  V(UniqueName)                  \
-  V(String)                      \
-  V(SeqString)                   \
-  V(ExternalString)              \
-  V(ConsString)                  \
-  V(SlicedString)                \
-  V(ExternalTwoByteString)       \
-  V(ExternalOneByteString)       \
-  V(SeqTwoByteString)            \
-  V(SeqOneByteString)            \
-  V(InternalizedString)          \
-  V(ThinString)                  \
-  V(Symbol)                      \
-                                 \
-  V(FixedTypedArrayBase)         \
-  V(FixedUint8Array)             \
-  V(FixedInt8Array)              \
-  V(FixedUint16Array)            \
-  V(FixedInt16Array)             \
-  V(FixedUint32Array)            \
-  V(FixedInt32Array)             \
-  V(FixedFloat32Array)           \
-  V(FixedFloat64Array)           \
-  V(FixedUint8ClampedArray)      \
-  V(ByteArray)                   \
-  V(BytecodeArray)               \
-  V(FreeSpace)                   \
-  V(JSReceiver)                  \
-  V(JSObject)                    \
-  V(JSArgumentsObject)           \
-  V(JSContextExtensionObject)    \
-  V(JSGeneratorObject)           \
-  V(JSAsyncGeneratorObject)      \
-  V(JSModuleNamespace)           \
-  V(Map)                         \
-  V(DescriptorArray)             \
-  V(FrameArray)                  \
-  V(TransitionArray)             \
-  V(FeedbackMetadata)            \
-  V(FeedbackVector)              \
-  V(DeoptimizationInputData)     \
-  V(DeoptimizationOutputData)    \
-  V(DependentCode)               \
-  V(HandlerTable)                \
-  V(FixedArray)                  \
-  V(BoilerplateDescription)      \
-  V(FixedDoubleArray)            \
-  V(WeakFixedArray)              \
-  V(ArrayList)                   \
-  V(RegExpMatchInfo)             \
-  V(Context)                     \
-  V(ScriptContextTable)          \
-  V(NativeContext)               \
-  V(ScopeInfo)                   \
-  V(ModuleInfo)                  \
-  V(JSBoundFunction)             \
-  V(JSFunction)                  \
-  V(Code)                        \
-  V(AbstractCode)                \
-  V(Oddball)                     \
-  V(SharedFunctionInfo)          \
-  V(JSValue)                     \
-  V(JSDate)                      \
-  V(JSMessageObject)             \
-  V(StringWrapper)               \
-  V(Foreign)                     \
-  V(Boolean)                     \
-  V(JSArray)                     \
-  V(JSArrayBuffer)               \
-  V(JSArrayBufferView)           \
-  V(JSAsyncFromSyncIterator)     \
-  V(JSCollection)                \
-  V(JSTypedArray)                \
-  V(JSArrayIterator)             \
-  V(JSDataView)                  \
-  V(JSProxy)                     \
-  V(JSError)                     \
-  V(JSPromiseCapability)         \
-  V(JSPromise)                   \
-  V(JSStringIterator)            \
-  V(JSSet)                       \
-  V(JSMap)                       \
-  V(JSSetIterator)               \
-  V(JSMapIterator)               \
-  V(JSWeakCollection)            \
-  V(JSWeakMap)                   \
-  V(JSWeakSet)                   \
-  V(JSRegExp)                    \
-  V(HashTable)                   \
-  V(Dictionary)                  \
-  V(UnseededNumberDictionary)    \
-  V(StringTable)                 \
-  V(StringSet)                   \
-  V(NormalizedMapCache)          \
-  V(CompilationCacheTable)       \
-  V(CodeCacheHashTable)          \
-  V(MapCache)                    \
-  V(JSGlobalObject)              \
-  V(JSGlobalProxy)               \
-  V(Undetectable)                \
-  V(AccessCheckNeeded)           \
-  V(Callable)                    \
-  V(Function)                    \
-  V(Constructor)                 \
-  V(TemplateInfo)                \
-  V(Filler)                      \
-  V(FixedArrayBase)              \
-  V(External)                    \
-  V(Struct)                      \
-  V(Cell)                        \
-  V(TemplateList)                \
-  V(PropertyCell)                \
-  V(WeakCell)                    \
-  V(ObjectHashTable)             \
-  V(ObjectHashSet)               \
-  V(WeakHashTable)               \
-  V(OrderedHashTable)            \
-  V(SloppyArgumentsElements)
+#define HEAP_OBJECT_TYPE_LIST(V)       \
+  V(AbstractCode)                      \
+  V(AccessCheckNeeded)                 \
+  V(ArrayList)                         \
+  V(BoilerplateDescription)            \
+  V(Boolean)                           \
+  V(BreakPointInfo)                    \
+  V(ByteArray)                         \
+  V(BytecodeArray)                     \
+  V(Callable)                          \
+  V(CallHandlerInfo)                   \
+  V(Cell)                              \
+  V(Code)                              \
+  V(CodeCacheHashTable)                \
+  V(CompilationCacheTable)             \
+  V(ConsString)                        \
+  V(ConstantElementsPair)              \
+  V(Constructor)                       \
+  V(Context)                           \
+  V(DeoptimizationInputData)           \
+  V(DeoptimizationOutputData)          \
+  V(DependentCode)                     \
+  V(DescriptorArray)                   \
+  V(Dictionary)                        \
+  V(External)                          \
+  V(ExternalOneByteString)             \
+  V(ExternalString)                    \
+  V(ExternalTwoByteString)             \
+  V(FeedbackMetadata)                  \
+  V(FeedbackVector)                    \
+  V(Filler)                            \
+  V(FixedArray)                        \
+  V(FixedArrayBase)                    \
+  V(FixedDoubleArray)                  \
+  V(FixedFloat32Array)                 \
+  V(FixedFloat64Array)                 \
+  V(FixedInt16Array)                   \
+  V(FixedInt32Array)                   \
+  V(FixedInt8Array)                    \
+  V(FixedTypedArrayBase)               \
+  V(FixedUint16Array)                  \
+  V(FixedUint32Array)                  \
+  V(FixedUint8Array)                   \
+  V(FixedUint8ClampedArray)            \
+  V(Foreign)                           \
+  V(FrameArray)                        \
+  V(FreeSpace)                         \
+  V(Function)                          \
+  V(HandlerTable)                      \
+  V(HashTable)                         \
+  V(HeapNumber)                        \
+  V(InternalizedString)                \
+  V(JSArgumentsObject)                 \
+  V(JSArray)                           \
+  V(JSArrayBuffer)                     \
+  V(JSArrayBufferView)                 \
+  V(JSArrayIterator)                   \
+  V(JSAsyncFromSyncIterator)           \
+  V(JSAsyncGeneratorObject)            \
+  V(JSBoundFunction)                   \
+  V(JSCollection)                      \
+  V(JSContextExtensionObject)          \
+  V(JSDataView)                        \
+  V(JSDate)                            \
+  V(JSError)                           \
+  V(JSFunction)                        \
+  V(JSGeneratorObject)                 \
+  V(JSGlobalObject)                    \
+  V(JSGlobalProxy)                     \
+  V(JSMap)                             \
+  V(JSMapIterator)                     \
+  V(JSMessageObject)                   \
+  V(JSModuleNamespace)                 \
+  V(JSObject)                          \
+  V(JSPromise)                         \
+  V(JSPromiseCapability)               \
+  V(JSProxy)                           \
+  V(JSReceiver)                        \
+  V(JSRegExp)                          \
+  V(JSSet)                             \
+  V(JSSetIterator)                     \
+  V(JSSloppyArgumentsObject)           \
+  V(JSStringIterator)                  \
+  V(JSTypedArray)                      \
+  V(JSValue)                           \
+  V(JSWeakCollection)                  \
+  V(JSWeakMap)                         \
+  V(JSWeakSet)                         \
+  V(Map)                               \
+  V(MapCache)                          \
+  V(ModuleInfo)                        \
+  V(MutableHeapNumber)                 \
+  V(Name)                              \
+  V(NativeContext)                     \
+  V(NormalizedMapCache)                \
+  V(ObjectHashSet)                     \
+  V(ObjectHashTable)                   \
+  V(Oddball)                           \
+  V(OrderedHashTable)                  \
+  V(PropertyCell)                      \
+  V(RegExpMatchInfo)                   \
+  V(ScopeInfo)                         \
+  V(ScriptContextTable)                \
+  V(SeqOneByteString)                  \
+  V(SeqString)                         \
+  V(SeqTwoByteString)                  \
+  V(SharedFunctionInfo)                \
+  V(SlicedString)                      \
+  V(SloppyArgumentsElements)           \
+  V(SourcePositionTableWithFrameCache) \
+  V(String)                            \
+  V(StringSet)                         \
+  V(StringTable)                       \
+  V(StringWrapper)                     \
+  V(Struct)                            \
+  V(Symbol)                            \
+  V(TemplateInfo)                      \
+  V(TemplateList)                      \
+  V(ThinString)                        \
+  V(TransitionArray)                   \
+  V(TypeFeedbackInfo)                  \
+  V(Undetectable)                      \
+  V(UniqueName)                        \
+  V(UnseededNumberDictionary)          \
+  V(WeakCell)                          \
+  V(WeakFixedArray)                    \
+  V(WeakHashTable)
 
 #define ODDBALL_LIST(V)                 \
   V(Undefined, undefined_value)         \
@@ -2682,6 +2688,11 @@ class JSArgumentsObject: public JSObject {
   // Indices of in-object properties.
   static const int kLengthIndex = 0;
 
+  DECL_ACCESSORS(length, Object)
+
+  DECLARE_VERIFIER(JSArgumentsObject)
+  DECLARE_CAST(JSArgumentsObject)
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArgumentsObject);
 };
@@ -2697,6 +2708,11 @@ class JSSloppyArgumentsObject: public JSArgumentsObject {
   // Indices of in-object properties.
   static const int kCalleeIndex = 1;
 
+  DECL_ACCESSORS(callee, Object)
+
+  DECLARE_VERIFIER(JSSloppyArgumentsObject)
+  DECLARE_CAST(JSSloppyArgumentsObject)
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSSloppyArgumentsObject);
 };
@@ -2708,6 +2724,8 @@ class JSStrictArgumentsObject: public JSArgumentsObject {
  public:
   // Offsets of object fields.
   static const int kSize = JSArgumentsObject::kHeaderSize;
+
+  DECLARE_CAST(JSStrictArgumentsObject)
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSStrictArgumentsObject);
@@ -2900,6 +2918,7 @@ class FixedDoubleArray: public FixedArrayBase {
 // JSArgumentsObject:
 // - FAST_SLOPPY_ARGUMENTS_ELEMENTS: FAST_HOLEY_ELEMENTS
 // - SLOW_SLOPPY_ARGUMENTS_ELEMENTS: DICTIONARY_ELEMENTS
+// - SLOW_SLOPPY_ARGUMENTS_ELEMENTS: DICTIONARY_ELEMENTS
 class SloppyArgumentsElements : public FixedArray {
  public:
   static const int kContextIndex = 0;
@@ -2914,6 +2933,9 @@ class SloppyArgumentsElements : public FixedArray {
   inline void set_mapped_entry(uint32_t entry, Object* object);
 
   DECLARE_CAST(SloppyArgumentsElements)
+#ifdef VERIFY_HEAP
+  void SloppyArgumentsElementsVerify(JSSloppyArgumentsObject* holder);
+#endif
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SloppyArgumentsElements);
@@ -3295,7 +3317,9 @@ class BytecodeArray : public FixedArrayBase {
 
   // Accessors for source position table containing mappings between byte code
   // offset and source position.
-  DECL_ACCESSORS(source_position_table, ByteArray)
+  DECL_ACCESSORS(source_position_table, Object)
+
+  inline ByteArray* SourcePositionTable();
 
   DECLARE_CAST(BytecodeArray)
 
@@ -3440,6 +3464,7 @@ class FixedTypedArrayBase: public FixedArrayBase {
 
   static inline int TypedArraySize(InstanceType type, int length);
   inline int TypedArraySize(InstanceType type);
+  static inline int ElementSize(InstanceType type);
 
   // Use with care: returns raw pointer into heap.
   inline void* DataPtr();
@@ -3447,8 +3472,6 @@ class FixedTypedArrayBase: public FixedArrayBase {
   inline int DataSize();
 
  private:
-  static inline int ElementSize(InstanceType type);
-
   inline int DataSize(InstanceType type);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(FixedTypedArrayBase);
@@ -3467,8 +3490,9 @@ class FixedTypedArray: public FixedTypedArrayBase {
   static inline Handle<Object> get(FixedTypedArray* array, int index);
   inline void set(int index, ElementType value);
 
-  static inline ElementType from_int(int value);
-  static inline ElementType from_double(double value);
+  static inline ElementType from(int value);
+  static inline ElementType from(uint32_t value);
+  static inline ElementType from(double value);
 
   // This accessor applies the correct conversion from Smi, HeapNumber
   // and undefined.
@@ -3708,7 +3732,10 @@ class Code: public HeapObject {
   DECL_ACCESSORS(deoptimization_data, FixedArray)
 
   // [source_position_table]: ByteArray for the source positions table.
-  DECL_ACCESSORS(source_position_table, ByteArray)
+  // SourcePositionTableWithFrameCache.
+  DECL_ACCESSORS(source_position_table, Object)
+
+  inline ByteArray* SourcePositionTable();
 
   // [trap_handler_index]: An index into the trap handler's master list of code
   // objects.
@@ -3867,6 +3894,11 @@ class Code: public HeapObject {
   // the code is going to be deoptimized because of dead embedded maps.
   inline bool marked_for_deoptimization();
   inline void set_marked_for_deoptimization(bool flag);
+
+  // [is_promise_rejection]: For kind BUILTIN tells whether the exception
+  // thrown by the code will lead to promise rejection.
+  inline bool deopt_already_counted();
+  inline void set_deopt_already_counted(bool flag);
 
   // [is_promise_rejection]: For kind BUILTIN tells whether the exception
   // thrown by the code will lead to promise rejection.
@@ -4141,7 +4173,8 @@ class Code: public HeapObject {
   static const int kStackSlotsBitCount = 24;
   static const int kMarkedForDeoptimizationBit =
       kStackSlotsFirstBit + kStackSlotsBitCount;
-  static const int kIsTurbofannedBit = kMarkedForDeoptimizationBit + 1;
+  static const int kDeoptAlreadyCountedBit = kMarkedForDeoptimizationBit + 1;
+  static const int kIsTurbofannedBit = kDeoptAlreadyCountedBit + 1;
   static const int kCanHaveWeakObjects = kIsTurbofannedBit + 1;
   // Could be moved to overlap previous bits when we need more space.
   static const int kIsConstructStub = kCanHaveWeakObjects + 1;
@@ -4155,6 +4188,8 @@ class Code: public HeapObject {
       kStackSlotsFirstBit, kStackSlotsBitCount> {};  // NOLINT
   class MarkedForDeoptimizationField
       : public BitField<bool, kMarkedForDeoptimizationBit, 1> {};  // NOLINT
+  class DeoptAlreadyCountedField
+      : public BitField<bool, kDeoptAlreadyCountedBit, 1> {};  // NOLINT
   class IsTurbofannedField : public BitField<bool, kIsTurbofannedBit, 1> {
   };  // NOLINT
   class CanHaveWeakObjectsField
@@ -4239,6 +4274,11 @@ class AbstractCode : public HeapObject {
 
   // Set the source position table.
   inline void set_source_position_table(ByteArray* source_position_table);
+
+  inline Object* stack_frame_cache();
+  static void SetStackFrameCache(Handle<AbstractCode> abstract_code,
+                                 Handle<UnseededNumberDictionary> cache);
+  void DropStackFrameCache();
 
   // Returns the size of instructions and the metadata.
   inline int SizeIncludingMetadata();
@@ -5835,6 +5875,7 @@ class SharedFunctionInfo: public HeapObject {
   static const int kInitialLength = kEntriesStart + kEntryLength;
 
   static const int kNotFound = -1;
+  static const int kInvalidLength = -1;
 
   // Helpers for assembly code that does a backwards walk of the optimized code
   // map.
@@ -5863,7 +5904,9 @@ class SharedFunctionInfo: public HeapObject {
 
   // [length]: The function length - usually the number of declared parameters.
   // Use up to 2^30 parameters.
-  inline int length() const;
+  // been compiled.
+  inline int GetLength() const;
+  inline bool HasLength() const;
   inline void set_length(int value);
 
   // [internal formal parameter count]: The declared number of parameters.
@@ -6414,6 +6457,10 @@ class SharedFunctionInfo: public HeapObject {
   class DisabledOptimizationReasonBits : public BitField<int, 22, 8> {};
 
  private:
+  FRIEND_TEST(PreParserTest, LazyFunctionLength);
+
+  inline int length() const;
+
 #if V8_HOST_ARCH_32_BIT
   // On 32 bit platforms, compiler hints is a smi.
   static const int kCompilerHintsSmiTagSize = kSmiTagSize;
@@ -6677,7 +6724,8 @@ class Module : public Struct {
 
   // Implementation of spec operation ModuleDeclarationInstantiation.
   // Returns false if an exception occurred during instantiation, true
-  // otherwise.
+  // otherwise. (In the case where the callback throws an exception, that
+  // exception is propagated.)
   static MUST_USE_RESULT bool Instantiate(Handle<Module> module,
                                           v8::Local<v8::Context> context,
                                           v8::Module::ResolveCallback callback);
@@ -6896,8 +6944,6 @@ class JSFunction: public JSObject {
   inline Object* instance_prototype();
   static void SetPrototype(Handle<JSFunction> function,
                            Handle<Object> value);
-  static void SetInstancePrototype(Handle<JSFunction> function,
-                                   Handle<Object> value);
 
   // After prototype is removed, it will not be created when accessed, and
   // [[Construct]] from this function will not be allowed.
@@ -7483,8 +7529,7 @@ class JSRegExp: public JSObject {
 
 DEFINE_OPERATORS_FOR_FLAGS(JSRegExp::Flags)
 
-
-class TypeFeedbackInfo: public Struct {
+class TypeFeedbackInfo : public Tuple3 {
  public:
   inline int ic_total_count();
   inline void set_ic_total_count(int count);
@@ -7505,14 +7550,9 @@ class TypeFeedbackInfo: public Struct {
 
   DECLARE_CAST(TypeFeedbackInfo)
 
-  // Dispatched behavior.
-  DECLARE_PRINTER(TypeFeedbackInfo)
-  DECLARE_VERIFIER(TypeFeedbackInfo)
-
-  static const int kStorage1Offset = HeapObject::kHeaderSize;
-  static const int kStorage2Offset = kStorage1Offset + kPointerSize;
-  static const int kStorage3Offset = kStorage2Offset + kPointerSize;
-  static const int kSize = kStorage3Offset + kPointerSize;
+  static const int kStorage1Offset = kValue1Offset;
+  static const int kStorage2Offset = kValue2Offset;
+  static const int kStorage3Offset = kValue3Offset;
 
  private:
   static const int kTypeChangeChecksumBits = 7;
@@ -7818,7 +7858,7 @@ class StringShape BASE_EMBEDDED {
   inline StringRepresentationTag representation_tag();
   inline uint32_t encoding_tag();
   inline uint32_t full_representation_tag();
-  inline uint32_t size_tag();
+  inline bool HasOnlyOneByteChars();
 #ifdef DEBUG
   inline uint32_t type() { return type_; }
   inline void invalidate() { valid_ = false; }
@@ -8203,8 +8243,11 @@ class String: public Name {
   // GetSubstitution(matched, str, position, captures, replacement)
   // Expand the $-expressions in the string and return a new string with
   // the result.
+  // A {start_index} can be passed to specify where to start scanning the
+  // replacement string.
   MUST_USE_RESULT static MaybeHandle<String> GetSubstitution(
-      Isolate* isolate, Match* match, Handle<String> replacement);
+      Isolate* isolate, Match* match, Handle<String> replacement,
+      int start_index = 0);
 
   // String equality operations.
   inline bool Equals(String* other);
@@ -9834,21 +9877,15 @@ class InterceptorInfo: public Struct {
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);
 };
 
-
-class CallHandlerInfo: public Struct {
+class CallHandlerInfo : public Tuple2 {
  public:
   DECL_ACCESSORS(callback, Object)
   DECL_ACCESSORS(data, Object)
 
   DECLARE_CAST(CallHandlerInfo)
 
-  // Dispatched behavior.
-  DECLARE_PRINTER(CallHandlerInfo)
-  DECLARE_VERIFIER(CallHandlerInfo)
-
-  static const int kCallbackOffset = HeapObject::kHeaderSize;
-  static const int kDataOffset = kCallbackOffset + kPointerSize;
-  static const int kSize = kDataOffset + kPointerSize;
+  static const int kCallbackOffset = kValue1Offset;
+  static const int kDataOffset = kValue2Offset;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(CallHandlerInfo);
@@ -10069,7 +10106,7 @@ class DebugInfo: public Struct {
 // The BreakPointInfo class holds information for break points set in a
 // function. The DebugInfo object holds a BreakPointInfo object for each code
 // position with one or more break points.
-class BreakPointInfo: public Struct {
+class BreakPointInfo : public Tuple2 {
  public:
   // The position in the source for the break position.
   DECL_INT_ACCESSORS(source_position)
@@ -10092,14 +10129,8 @@ class BreakPointInfo: public Struct {
 
   DECLARE_CAST(BreakPointInfo)
 
-  // Dispatched behavior.
-  DECLARE_PRINTER(BreakPointInfo)
-  DECLARE_VERIFIER(BreakPointInfo)
-
-  static const int kSourcePositionIndex = Struct::kHeaderSize;
-  static const int kBreakPointObjectsIndex =
-      kSourcePositionIndex + kPointerSize;
-  static const int kSize = kBreakPointObjectsIndex + kPointerSize;
+  static const int kSourcePositionIndex = kValue1Offset;
+  static const int kBreakPointObjectsIndex = kValue2Offset;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(BreakPointInfo);
@@ -10117,6 +10148,7 @@ class StackFrameInfo : public Struct {
   DECL_BOOLEAN_ACCESSORS(is_constructor)
   DECL_BOOLEAN_ACCESSORS(is_wasm)
   DECL_INT_ACCESSORS(flag)
+  DECL_INT_ACCESSORS(id)
 
   DECLARE_CAST(StackFrameInfo)
 
@@ -10133,7 +10165,8 @@ class StackFrameInfo : public Struct {
   static const int kFunctionNameIndex =
       kScriptNameOrSourceUrlIndex + kPointerSize;
   static const int kFlagIndex = kFunctionNameIndex + kPointerSize;
-  static const int kSize = kFlagIndex + kPointerSize;
+  static const int kIdIndex = kFlagIndex + kPointerSize;
+  static const int kSize = kIdIndex + kPointerSize;
 
  private:
   // Bit position in the flag, from least significant bit position.
@@ -10142,6 +10175,22 @@ class StackFrameInfo : public Struct {
   static const int kIsWasmBit = 2;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(StackFrameInfo);
+};
+
+class SourcePositionTableWithFrameCache : public Tuple2 {
+ public:
+  DECL_ACCESSORS(source_position_table, ByteArray)
+  DECL_ACCESSORS(stack_frame_cache, UnseededNumberDictionary)
+
+  DECLARE_CAST(SourcePositionTableWithFrameCache)
+
+  static const int kSourcePositionTableIndex = Struct::kHeaderSize;
+  static const int kStackFrameCacheIndex =
+      kSourcePositionTableIndex + kPointerSize;
+  static const int kSize = kStackFrameCacheIndex + kPointerSize;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(SourcePositionTableWithFrameCache);
 };
 
 #define VISITOR_SYNCHRONIZATION_TAGS_LIST(V)                               \

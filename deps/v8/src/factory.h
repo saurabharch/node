@@ -9,6 +9,8 @@
 #include "src/globals.h"
 #include "src/isolate.h"
 #include "src/messages.h"
+#include "src/objects/descriptor-array.h"
+#include "src/objects/dictionary.h"
 #include "src/objects/scope-info.h"
 
 namespace v8 {
@@ -325,6 +327,10 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<BreakPointInfo> NewBreakPointInfo(int source_position);
   Handle<StackFrameInfo> NewStackFrameInfo();
+  Handle<SourcePositionTableWithFrameCache>
+  NewSourcePositionTableWithFrameCache(
+      Handle<ByteArray> source_position_table,
+      Handle<UnseededNumberDictionary> stack_frame_cache);
 
   // Foreign objects are pretenured when allocated by the bootstrapper.
   Handle<Foreign> NewForeign(Address addr,

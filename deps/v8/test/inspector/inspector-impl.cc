@@ -10,7 +10,7 @@
 
 namespace {
 
-const int kInspectorClientIndex = v8::Context::kDebugIdIndex + 1;
+const int kInspectorClientIndex = 0;
 
 class ChannelImpl final : public v8_inspector::V8Inspector::Channel {
  public:
@@ -85,6 +85,25 @@ void MessageHandler(v8::Local<v8::Message> message,
                              inspector->createStackTrace(stack), script_id);
 }
 
+v8::Local<v8::String> ToString(v8::Isolate* isolate,
+                               const v8_inspector::StringView& string) {
+  if (string.is8Bit())
+    return v8::String::NewFromOneByte(isolate, string.characters8(),
+                                      v8::NewStringType::kNormal,
+                                      static_cast<int>(string.length()))
+        .ToLocalChecked();
+  else
+    return v8::String::NewFromTwoByte(isolate, string.characters16(),
+                                      v8::NewStringType::kNormal,
+                                      static_cast<int>(string.length()))
+        .ToLocalChecked();
+}
+
+void Print(v8::Isolate* isolate, const v8_inspector::StringView& string) {
+  v8::Local<v8::String> v8_string = ToString(isolate, string);
+  v8::String::Utf8Value utf8_string(v8_string);
+  fwrite(*utf8_string, sizeof(**utf8_string), utf8_string.length(), stdout);
+}
 }  //  namespace
 
 class ConnectTask : public TaskRunner::Task {
@@ -127,11 +146,11 @@ class DisconnectTask : public TaskRunner::Task {
 class CreateContextGroupTask : public TaskRunner::Task {
  public:
   CreateContextGroupTask(InspectorClientImpl* client,
-                         v8::ExtensionConfiguration* extensions,
+                         TaskRunner::SetupGlobalTasks setup_global_tasks,
                          v8::base::Semaphore* ready_semaphore,
                          int* context_group_id)
       : client_(client),
-        extensions_(extensions),
+        setup_global_tasks_(std::move(setup_global_tasks)),
         ready_semaphore_(ready_semaphore),
         context_group_id_(context_group_id) {}
   virtual ~CreateContextGroupTask() = default;
@@ -140,13 +159,13 @@ class CreateContextGroupTask : public TaskRunner::Task {
 
   void Run(v8::Isolate* isolate,
            const v8::Global<v8::Context>& global_context) {
-    *context_group_id_ = client_->createContextGroup(extensions_);
+    *context_group_id_ = client_->createContextGroup(setup_global_tasks_);
     if (ready_semaphore_) ready_semaphore_->Signal();
   }
 
  private:
   InspectorClientImpl* client_;
-  v8::ExtensionConfiguration* extensions_;
+  TaskRunner::SetupGlobalTasks setup_global_tasks_;
   v8::base::Semaphore* ready_semaphore_;
   int* context_group_id_;
 };
@@ -207,19 +226,21 @@ void InspectorClientImpl::disconnect() {
     states_[it.first] = it.second->stateJSON();
   }
   sessions_.clear();
+  inspector_.reset();
 }
 
 void InspectorClientImpl::scheduleCreateContextGroup(
-    v8::ExtensionConfiguration* extensions,
+    TaskRunner::SetupGlobalTasks setup_global_tasks,
     v8::base::Semaphore* ready_semaphore, int* context_group_id) {
   task_runner_->Append(new CreateContextGroupTask(
-      this, extensions, ready_semaphore, context_group_id));
+      this, std::move(setup_global_tasks), ready_semaphore, context_group_id));
 }
 
 int InspectorClientImpl::createContextGroup(
-    v8::ExtensionConfiguration* extensions) {
+    const TaskRunner::SetupGlobalTasks& setup_global_tasks) {
   v8::HandleScope handle_scope(isolate_);
-  v8::Local<v8::Context> context = task_runner_->NewContextGroup();
+  v8::Local<v8::Context> context =
+      task_runner_->NewContextGroup(setup_global_tasks);
   context->SetAlignedPointerInEmbedderData(kInspectorClientIndex, this);
   int context_group_id = TaskRunner::GetContextGroupId(context);
   v8_inspector::StringView state;
@@ -265,6 +286,10 @@ void InspectorClientImpl::setMemoryInfoForTest(
   memory_info_.Reset(isolate_, memory_info);
 }
 
+void InspectorClientImpl::setLogConsoleApiMessageCalls(bool log) {
+  log_console_api_message_calls_ = log;
+}
+
 v8::MaybeLocal<v8::Value> InspectorClientImpl::memoryInfo(
     v8::Isolate* isolate, v8::Local<v8::Context>) {
   if (memory_info_.IsEmpty()) return v8::MaybeLocal<v8::Value>();
@@ -277,6 +302,20 @@ void InspectorClientImpl::runMessageLoopOnPause(int) {
 
 void InspectorClientImpl::quitMessageLoopOnPause() {
   task_runner_->QuitMessageLoop();
+}
+
+void InspectorClientImpl::consoleAPIMessage(
+    int contextGroupId, v8::Isolate::MessageErrorLevel level,
+    const v8_inspector::StringView& message,
+    const v8_inspector::StringView& url, unsigned lineNumber,
+    unsigned columnNumber, v8_inspector::V8StackTrace* stack) {
+  if (!log_console_api_message_calls_) return;
+  Print(isolate_, message);
+  fprintf(stdout, " (");
+  Print(isolate_, url);
+  fprintf(stdout, ":%d:%d)", lineNumber, columnNumber);
+  Print(isolate_, stack->toString()->string());
+  fprintf(stdout, "\n");
 }
 
 v8_inspector::V8Inspector* InspectorClientImpl::InspectorFromContext(
@@ -333,11 +372,14 @@ class SendMessageToBackendTask : public TaskRunner::Task {
 
 TaskRunner* SendMessageToBackendExtension::backend_task_runner_ = nullptr;
 
-v8::Local<v8::FunctionTemplate>
-SendMessageToBackendExtension::GetNativeFunctionTemplate(
-    v8::Isolate* isolate, v8::Local<v8::String> name) {
-  return v8::FunctionTemplate::New(
-      isolate, SendMessageToBackendExtension::SendMessageToBackend);
+void SendMessageToBackendExtension::Run(v8::Isolate* isolate,
+                                        v8::Local<v8::ObjectTemplate> global) {
+  global->Set(
+      v8::String::NewFromUtf8(isolate, "sendMessageToBackend",
+                              v8::NewStringType::kNormal)
+          .ToLocalChecked(),
+      v8::FunctionTemplate::New(
+          isolate, &SendMessageToBackendExtension::SendMessageToBackend));
 }
 
 void SendMessageToBackendExtension::SendMessageToBackend(

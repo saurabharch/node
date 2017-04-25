@@ -4008,7 +4008,7 @@ bool HOptimizedGraphBuilder::BuildGraph() {
   // Set this predicate early to avoid handle deref during graph optimization.
   graph()->set_allow_code_motion(
       current_info()->IsStub() ||
-      current_info()->shared_info()->opt_count() + 1 < FLAG_max_opt_count);
+      current_info()->shared_info()->deopt_count() + 1 < FLAG_max_deopt_count);
 
   // Perform any necessary OSR-specific cleanups or changes to the graph.
   osr()->FinishGraph();
@@ -7180,6 +7180,7 @@ HValue* HOptimizedGraphBuilder::HandlePolymorphicElementAccess(
     Map* transitioned_map =
         map->FindElementsKindTransitionedMap(&possible_transitioned_maps);
     if (transitioned_map != nullptr) {
+      DCHECK(!map->is_stable());
       transition_target.Add(handle(transitioned_map));
     } else {
       transition_target.Add(Handle<Map>());
@@ -10013,12 +10014,11 @@ void HOptimizedGraphBuilder::VisitDelete(UnaryOperation* expr) {
     CHECK_ALIVE(VisitForValue(prop->key()));
     HValue* key = Pop();
     HValue* obj = Pop();
-    Add<HPushArguments>(obj, key);
-    HInstruction* instr = New<HCallRuntime>(
-        Runtime::FunctionForId(is_strict(function_language_mode())
-                                   ? Runtime::kDeleteProperty_Strict
-                                   : Runtime::kDeleteProperty_Sloppy),
-        2);
+    HValue* language_mode = Add<HConstant>(
+        static_cast<int32_t>(function_language_mode()), Representation::Smi());
+    Add<HPushArguments>(obj, key, language_mode);
+    HInstruction* instr =
+        New<HCallRuntime>(Runtime::FunctionForId(Runtime::kDeleteProperty), 3);
     return ast_context()->ReturnInstruction(instr, expr->id());
   } else if (proxy != NULL) {
     Variable* var = proxy->var();

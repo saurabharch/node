@@ -186,7 +186,7 @@ CodeBreakIterator::CodeBreakIterator(Handle<DebugInfo> debug_info)
     : BreakIterator(debug_info),
       reloc_iterator_(debug_info->DebugCode(), GetModeMask()),
       source_position_iterator_(
-          debug_info->DebugCode()->source_position_table()) {
+          debug_info->DebugCode()->SourcePositionTable()) {
   // There is at least one break location.
   DCHECK(!Done());
   Next();
@@ -277,7 +277,7 @@ BytecodeArrayBreakIterator::BytecodeArrayBreakIterator(
     Handle<DebugInfo> debug_info)
     : BreakIterator(debug_info),
       source_position_iterator_(
-          debug_info->DebugBytecodeArray()->source_position_table()) {
+          debug_info->DebugBytecodeArray()->SourcePositionTable()) {
   // There is at least one break location.
   DCHECK(!Done());
   Next();
@@ -1888,32 +1888,6 @@ void Debug::OnAfterCompile(Handle<Script> script) {
 }
 
 namespace {
-struct CollectedCallbackData {
-  Object** location;
-  int id;
-  Debug* debug;
-  Isolate* isolate;
-
-  CollectedCallbackData(Object** location, int id, Debug* debug,
-                        Isolate* isolate)
-      : location(location), id(id), debug(debug), isolate(isolate) {}
-};
-
-void SendAsyncTaskEventCancel(const v8::WeakCallbackInfo<void>& info) {
-  std::unique_ptr<CollectedCallbackData> data(
-      reinterpret_cast<CollectedCallbackData*>(info.GetParameter()));
-  if (!data->debug->is_active()) return;
-  HandleScope scope(data->isolate);
-  data->debug->OnAsyncTaskEvent(debug::kDebugPromiseCollected, data->id, 0);
-}
-
-void ResetPromiseHandle(const v8::WeakCallbackInfo<void>& info) {
-  CollectedCallbackData* data =
-      reinterpret_cast<CollectedCallbackData*>(info.GetParameter());
-  GlobalHandles::Destroy(data->location);
-  info.SetSecondPassCallback(&SendAsyncTaskEventCancel);
-}
-
 // In an async function, reuse the existing stack related to the outer
 // Promise. Otherwise, e.g. in a direct call to then, save a new stack.
 // Promises with multiple reactions with one or more of them being async
@@ -1982,19 +1956,6 @@ int Debug::NextAsyncTaskId(Handle<JSObject> promise) {
       handle(Smi::FromInt(++thread_local_.async_task_count_), isolate_);
   Object::SetProperty(&it, async_id, SLOPPY, Object::MAY_BE_STORE_FROM_KEYED)
       .ToChecked();
-  Handle<Object> global_handle = isolate_->global_handles()->Create(*promise);
-  // We send EnqueueRecurring async task event when promise is fulfilled or
-  // rejected, WillHandle and DidHandle for every scheduled microtask for this
-  // promise.
-  // We need to send a cancel event when no other microtasks can be
-  // started for this promise and all current microtasks are finished.
-  // Since we holding promise when at least one microtask is scheduled (inside
-  // PromiseReactionJobInfo), we can send cancel event in weak callback.
-  GlobalHandles::MakeWeak(
-      global_handle.location(),
-      new CollectedCallbackData(global_handle.location(), async_id->value(),
-                                this, isolate_),
-      &ResetPromiseHandle, v8::WeakCallbackType::kParameter);
   return async_id->value();
 }
 
@@ -2044,9 +2005,6 @@ void Debug::OnAsyncTaskEvent(debug::PromiseDebugActionType type, int id,
   if (in_debug_scope() || ignore_events()) return;
   if (!debug_delegate_) return;
   SuppressDebug while_processing(this);
-  DebugScope debug_scope(isolate_->debug());
-  if (debug_scope.failed()) return;
-  HandleScope scope(isolate_);
   PostponeInterruptsScope no_interrupts(isolate_);
   DisableBreak no_recursive_break(this);
   bool created_by_user = false;
@@ -2058,16 +2016,13 @@ void Debug::OnAsyncTaskEvent(debug::PromiseDebugActionType type, int id,
         !it.done() &&
         !IsFrameBlackboxed(it.frame());
   }
-  debug_delegate_->PromiseEventOccurred(
-      Utils::ToLocal(debug_scope.GetContext()), type, id, parent_id,
-      created_by_user);
+  debug_delegate_->PromiseEventOccurred(type, id, parent_id, created_by_user);
 }
 
 void Debug::ProcessCompileEvent(v8::DebugEvent event, Handle<Script> script) {
   // Attach the correct debug id to the script. The debug id is used by the
   // inspector to filter scripts by native context.
-  FixedArray* array = isolate_->native_context()->embedder_data();
-  script->set_context_data(array->get(v8::Context::kDebugIdIndex));
+  script->set_context_data(isolate_->native_context()->debug_context_id());
   if (ignore_events()) return;
   if (!script->IsUserJavaScript() && script->type() != i::Script::TYPE_WASM) {
     return;
@@ -2347,8 +2302,11 @@ bool Debug::PerformSideEffectCheckForCallback(Address function) {
 }
 
 void LegacyDebugDelegate::PromiseEventOccurred(
-    v8::Local<v8::Context> context, v8::debug::PromiseDebugActionType type,
-    int id, int parent_id, bool created_by_user) {
+    v8::debug::PromiseDebugActionType type, int id, int parent_id,
+    bool created_by_user) {
+  DebugScope debug_scope(isolate_->debug());
+  if (debug_scope.failed()) return;
+  HandleScope scope(isolate_);
   Handle<Object> event_data;
   if (isolate_->debug()->MakeAsyncTaskEvent(type, id).ToHandle(&event_data)) {
     ProcessDebugEvent(v8::AsyncTaskEvent, Handle<JSObject>::cast(event_data));

@@ -251,8 +251,8 @@ namespace internal {
   F(GeneratorGetSourcePosition, 1, 1)            \
   F(GeneratorGetResumeMode, 1, 1)
 
-#ifdef V8_I18N_SUPPORT
-#define FOR_EACH_INTRINSIC_I18N(F)           \
+#ifdef V8_INTL_SUPPORT
+#define FOR_EACH_INTRINSIC_INTL(F)           \
   F(CanonicalizeLanguageTag, 1, 1)           \
   F(AvailableLocalesOf, 1, 1)                \
   F(GetDefaultICULocale, 0, 1)               \
@@ -274,12 +274,12 @@ namespace internal {
   F(BreakIteratorNext, 1, 1)                 \
   F(BreakIteratorCurrent, 1, 1)              \
   F(BreakIteratorBreakType, 1, 1)            \
-  F(StringToLowerCaseI18N, 1, 1)             \
-  F(StringToUpperCaseI18N, 1, 1)             \
+  F(StringToLowerCaseIntl, 1, 1)             \
+  F(StringToUpperCaseIntl, 1, 1)             \
   F(StringLocaleConvertCase, 3, 1)           \
   F(DateCacheVersion, 0, 1)
 #else
-#define FOR_EACH_INTRINSIC_I18N(F)
+#define FOR_EACH_INTRINSIC_INTL(F)
 #endif
 
 #define FOR_EACH_INTRINSIC_INTERNAL(F)             \
@@ -322,7 +322,6 @@ namespace internal {
   F(ThrowNonCallableInInstanceOfCheck, 0, 1)       \
   F(ThrowNonObjectInInstanceOfCheck, 0, 1)         \
   F(ThrowNotConstructor, 1, 1)                     \
-  F(ThrowNotGeneric, 1, 1)                         \
   F(ThrowRangeError, -1 /* >= 1 */, 1)             \
   F(ThrowReferenceError, 1, 1)                     \
   F(ThrowStackOverflow, 0, 1)                      \
@@ -388,8 +387,8 @@ namespace internal {
   F(SetProperty, 4, 1)                                          \
   F(AddElement, 3, 1)                                           \
   F(AppendElement, 2, 1)                                        \
-  F(DeleteProperty_Sloppy, 2, 1)                                \
-  F(DeleteProperty_Strict, 2, 1)                                \
+  F(DeleteProperty, 3, 1)                                       \
+  F(ShrinkPropertyDictionary, 2, 1)                             \
   F(HasProperty, 2, 1)                                          \
   F(GetOwnPropertyKeys, 2, 1)                                   \
   F(GetInterceptorInfo, 1, 1)                                   \
@@ -519,7 +518,7 @@ namespace internal {
   F(StoreLookupSlot_Strict, 2, 1)
 
 #define FOR_EACH_INTRINSIC_STRINGS(F)     \
-  F(GetSubstitution, 4, 1)                \
+  F(GetSubstitution, 5, 1)                \
   F(StringReplaceOneCharWithString, 3, 1) \
   F(StringIndexOf, 3, 1)                  \
   F(StringIndexOfUnchecked, 3, 1)         \
@@ -565,6 +564,7 @@ namespace internal {
   F(GetOptimizationStatus, -1, 1)             \
   F(UnblockConcurrentRecompilation, 0, 1)     \
   F(GetOptimizationCount, 1, 1)               \
+  F(GetDeoptCount, 1, 1)                      \
   F(GetUndetectable, 0, 1)                    \
   F(GetCallable, 0, 1)                        \
   F(ClearFunctionFeedback, 1, 1)              \
@@ -617,24 +617,25 @@ namespace internal {
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
   F(SetWasmCompileFromPromiseOverload, 0, 1)  \
-  F(ResetWasmOverloads, 1, 1)                 \
+  F(ResetWasmOverloads, 0, 1)                 \
   F(HeapObjectVerify, 1, 1)                   \
   F(WasmNumInterpretedCalls, 1, 1)            \
   F(RedirectToWasmInterpreter, 2, 1)
 
-#define FOR_EACH_INTRINSIC_TYPEDARRAY(F)     \
-  F(ArrayBufferGetByteLength, 1, 1)          \
-  F(ArrayBufferNeuter, 1, 1)                 \
-  F(ArrayBufferViewGetByteLength, 1, 1)      \
-  F(ArrayBufferViewGetByteOffset, 1, 1)      \
-  F(TypedArrayGetLength, 1, 1)               \
-  F(TypedArrayGetBuffer, 1, 1)               \
-  F(TypedArraySetFastCases, 3, 1)            \
-  F(TypedArraySortFast, 1, 1)                \
-  F(TypedArrayMaxSizeInHeap, 0, 1)           \
-  F(IsTypedArray, 1, 1)                      \
-  F(IsSharedTypedArray, 1, 1)                \
-  F(IsSharedIntegerTypedArray, 1, 1)         \
+#define FOR_EACH_INTRINSIC_TYPEDARRAY(F) \
+  F(ArrayBufferGetByteLength, 1, 1)      \
+  F(ArrayBufferNeuter, 1, 1)             \
+  F(TypedArrayCopyElements, 3, 1)        \
+  F(ArrayBufferViewGetByteLength, 1, 1)  \
+  F(ArrayBufferViewGetByteOffset, 1, 1)  \
+  F(TypedArrayGetLength, 1, 1)           \
+  F(TypedArrayGetBuffer, 1, 1)           \
+  F(TypedArraySetFastCases, 3, 1)        \
+  F(TypedArraySortFast, 1, 1)            \
+  F(TypedArrayMaxSizeInHeap, 0, 1)       \
+  F(IsTypedArray, 1, 1)                  \
+  F(IsSharedTypedArray, 1, 1)            \
+  F(IsSharedIntegerTypedArray, 1, 1)     \
   F(IsSharedInteger32TypedArray, 1, 1)
 
 #define FOR_EACH_INTRINSIC_WASM(F)     \
@@ -693,7 +694,7 @@ namespace internal {
   FOR_EACH_INTRINSIC_INTERPRETER(F)         \
   FOR_EACH_INTRINSIC_FUNCTION(F)            \
   FOR_EACH_INTRINSIC_GENERATOR(F)           \
-  FOR_EACH_INTRINSIC_I18N(F)                \
+  FOR_EACH_INTRINSIC_INTL(F)                \
   FOR_EACH_INTRINSIC_INTERNAL(F)            \
   FOR_EACH_INTRINSIC_LITERALS(F)            \
   FOR_EACH_INTRINSIC_LIVEEDIT(F)            \

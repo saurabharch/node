@@ -25,6 +25,9 @@ class Script;
 
 namespace debug {
 
+void SetContextId(Local<Context> context, int id);
+int GetContextId(Local<Context> context);
+
 /**
  * Debugger is running in its own context which is entered while debugger
  * messages are being dispatched. This is an explicit getter for this
@@ -166,8 +169,7 @@ MaybeLocal<UnboundScript> CompileInspectorScript(Isolate* isolate,
 class DebugDelegate {
  public:
   virtual ~DebugDelegate() {}
-  virtual void PromiseEventOccurred(v8::Local<v8::Context> context,
-                                    debug::PromiseDebugActionType type, int id,
+  virtual void PromiseEventOccurred(debug::PromiseDebugActionType type, int id,
                                     int parent_id, bool created_by_user) {}
   virtual void ScriptCompiled(v8::Local<Script> script,
                               bool has_compile_error) {}
@@ -206,6 +208,11 @@ enum Builtin {
 };
 
 Local<Function> GetBuiltin(Isolate* isolate, Builtin builtin);
+
+V8_EXPORT_PRIVATE void SetConsoleDelegate(Isolate* isolate,
+                                          ConsoleDelegate* delegate);
+
+int GetStackFrameId(v8::Local<v8::StackFrame> frame);
 
 /**
  * Native wrapper around v8::internal::JSGeneratorObject object.

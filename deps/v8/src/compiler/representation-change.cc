@@ -436,7 +436,10 @@ Node* RepresentationChanger::GetTaggedRepresentationFor(
   } else if (output_rep ==
              MachineRepresentation::kFloat32) {  // float32 -> float64 -> tagged
     node = InsertChangeFloat32ToFloat64(node);
-    op = simplified()->ChangeFloat64ToTagged();
+    op = simplified()->ChangeFloat64ToTagged(
+        output_type->Maybe(Type::MinusZero())
+            ? CheckForMinusZeroMode::kCheckForMinusZero
+            : CheckForMinusZeroMode::kDontCheckForMinusZero);
   } else if (output_rep == MachineRepresentation::kFloat64) {
     if (output_type->Is(Type::Signed31())) {  // float64 -> int32 -> tagged
       node = InsertChangeFloat64ToInt32(node);
@@ -450,7 +453,10 @@ Node* RepresentationChanger::GetTaggedRepresentationFor(
       node = InsertChangeFloat64ToUint32(node);
       op = simplified()->ChangeUint32ToTagged();
     } else {
-      op = simplified()->ChangeFloat64ToTagged();
+      op = simplified()->ChangeFloat64ToTagged(
+          output_type->Maybe(Type::MinusZero())
+              ? CheckForMinusZeroMode::kCheckForMinusZero
+              : CheckForMinusZeroMode::kDontCheckForMinusZero);
     }
   } else {
     return TypeError(node, output_rep, output_type,
@@ -648,7 +654,7 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
                use_info.type_check() == TypeCheckKind::kSigned32) {
       op = simplified()->CheckedFloat64ToInt32(
           output_type->Maybe(Type::MinusZero())
-              ? CheckForMinusZeroMode::kCheckForMinusZero
+              ? use_info.minus_zero_check()
               : CheckForMinusZeroMode::kDontCheckForMinusZero);
     } else if (output_type->Is(Type::Unsigned32())) {
       op = machine()->ChangeFloat64ToUint32();
@@ -680,7 +686,7 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
     } else if (use_info.type_check() == TypeCheckKind::kSigned32) {
       op = simplified()->CheckedTaggedToInt32(
           output_type->Maybe(Type::MinusZero())
-              ? CheckForMinusZeroMode::kCheckForMinusZero
+              ? use_info.minus_zero_check()
               : CheckForMinusZeroMode::kDontCheckForMinusZero);
     } else if (output_type->Is(Type::Unsigned32())) {
       op = simplified()->ChangeTaggedToUint32();

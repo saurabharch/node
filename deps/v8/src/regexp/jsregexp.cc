@@ -26,10 +26,10 @@
 #include "src/string-search.h"
 #include "src/unicode-decoder.h"
 
-#ifdef V8_I18N_SUPPORT
+#ifdef V8_INTL_SUPPORT
 #include "unicode/uniset.h"
 #include "unicode/utypes.h"
-#endif  // V8_I18N_SUPPORT
+#endif  // V8_INTL_SUPPORT
 
 #ifndef V8_INTERPRETED_REGEXP
 #if V8_TARGET_ARCH_IA32
@@ -5113,7 +5113,7 @@ RegExpNode* UnanchoredAdvance(RegExpCompiler* compiler,
 }
 
 void AddUnicodeCaseEquivalents(ZoneList<CharacterRange>* ranges, Zone* zone) {
-#ifdef V8_I18N_SUPPORT
+#ifdef V8_INTL_SUPPORT
   // Use ICU to compute the case fold closure over the ranges.
   icu::UnicodeSet set;
   for (int i = 0; i < ranges->length(); i++) {
@@ -5131,7 +5131,7 @@ void AddUnicodeCaseEquivalents(ZoneList<CharacterRange>* ranges, Zone* zone) {
   }
   // No errors and everything we collected have been ranges.
   CharacterRange::Canonicalize(ranges);
-#endif  // V8_I18N_SUPPORT
+#endif  // V8_INTL_SUPPORT
 }
 
 
@@ -5352,6 +5352,7 @@ void RegExpDisjunction::FixSingleCharacterDisjunctions(
   Zone* zone = compiler->zone();
   ZoneList<RegExpTree*>* alternatives = this->alternatives();
   int length = alternatives->length();
+  const bool unicode = compiler->unicode();
 
   int write_posn = 0;
   int i = 0;
@@ -5368,7 +5369,8 @@ void RegExpDisjunction::FixSingleCharacterDisjunctions(
       i++;
       continue;
     }
-    DCHECK(!unibrow::Utf16::IsLeadSurrogate(atom->data().at(0)));
+    DCHECK_IMPLIES(unicode,
+                   !unibrow::Utf16::IsLeadSurrogate(atom->data().at(0)));
     bool contains_trail_surrogate =
         unibrow::Utf16::IsTrailSurrogate(atom->data().at(0));
     int first_in_run = i;
@@ -5378,7 +5380,8 @@ void RegExpDisjunction::FixSingleCharacterDisjunctions(
       if (!alternative->IsAtom()) break;
       atom = alternative->AsAtom();
       if (atom->length() != 1) break;
-      DCHECK(!unibrow::Utf16::IsLeadSurrogate(atom->data().at(0)));
+      DCHECK_IMPLIES(unicode,
+                     !unibrow::Utf16::IsLeadSurrogate(atom->data().at(0)));
       contains_trail_surrogate |=
           unibrow::Utf16::IsTrailSurrogate(atom->data().at(0));
       i++;
@@ -5394,7 +5397,7 @@ void RegExpDisjunction::FixSingleCharacterDisjunctions(
         ranges->Add(CharacterRange::Singleton(old_atom->data().at(0)), zone);
       }
       RegExpCharacterClass::Flags flags;
-      if (compiler->unicode() && contains_trail_surrogate) {
+      if (unicode && contains_trail_surrogate) {
         flags = RegExpCharacterClass::CONTAINS_SPLIT_SURROGATE;
       }
       alternatives->at(write_posn++) =

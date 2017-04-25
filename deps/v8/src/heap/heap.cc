@@ -1729,12 +1729,14 @@ void Heap::Scavenge() {
   {
     // Copy objects reachable from the old generation.
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_OLD_TO_NEW_POINTERS);
-    RememberedSet<OLD_TO_NEW>::Iterate(this, [this](Address addr) {
-      return Scavenger::CheckAndScavengeObject(this, addr);
-    });
+    RememberedSet<OLD_TO_NEW>::Iterate(
+        this, SYNCHRONIZED, [this](Address addr) {
+          return Scavenger::CheckAndScavengeObject(this, addr);
+        });
 
     RememberedSet<OLD_TO_NEW>::IterateTyped(
-        this, [this](SlotType type, Address host_addr, Address addr) {
+        this, SYNCHRONIZED,
+        [this](SlotType type, Address host_addr, Address addr) {
           return UpdateTypedSlotHelper::UpdateTypedSlot(
               isolate(), type, addr, [this](Object** addr) {
                 // We expect that objects referenced by code are long living.
@@ -2924,7 +2926,6 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
     case kInstanceofCacheMapRootIndex:
     case kInstanceofCacheAnswerRootIndex:
     case kCodeStubsRootIndex:
-    case kEmptyScriptRootIndex:
     case kScriptListRootIndex:
     case kMaterializedObjectsRootIndex:
     case kMicrotaskQueueRootIndex:
@@ -2968,6 +2969,7 @@ bool Heap::IsUnmodifiedHeapObject(Object** p) {
   Object* maybe_constructor = js_object->map()->GetConstructor();
   if (!maybe_constructor->IsJSFunction()) return false;
   JSFunction* constructor = JSFunction::cast(maybe_constructor);
+  if (js_object->elements()->length() != 0) return false;
 
   return constructor->initial_map() == heap_object->map();
 }
@@ -6400,6 +6402,24 @@ bool Heap::GetObjectTypeName(size_t index, const char** object_type,
 // static
 int Heap::GetStaticVisitorIdForMap(Map* map) {
   return StaticVisitorBase::GetVisitorId(map);
+}
+
+const char* AllocationSpaceName(AllocationSpace space) {
+  switch (space) {
+    case NEW_SPACE:
+      return "NEW_SPACE";
+    case OLD_SPACE:
+      return "OLD_SPACE";
+    case CODE_SPACE:
+      return "CODE_SPACE";
+    case MAP_SPACE:
+      return "MAP_SPACE";
+    case LO_SPACE:
+      return "LO_SPACE";
+    default:
+      UNREACHABLE();
+  }
+  return NULL;
 }
 
 }  // namespace internal
