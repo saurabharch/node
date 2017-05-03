@@ -318,24 +318,6 @@ void BytecodeGraphBuilder::Environment::PrepareForOsrEntry() {
     if (i >= accumulator_base()) idx = Linkage::kOsrAccumulatorRegisterIndex;
     values()->at(i) = graph()->NewNode(common()->OsrValue(idx), entry);
   }
-
-  BailoutId loop_id(builder_->bytecode_iterator().current_offset());
-  Node* frame_state =
-      Checkpoint(loop_id, OutputFrameStateCombine::Ignore(), false, nullptr);
-  Node* checkpoint =
-      graph()->NewNode(common()->Checkpoint(), frame_state, entry, entry);
-  UpdateEffectDependency(checkpoint);
-
-  // Create the OSR guard nodes.
-  const Operator* guard_op = common()->OsrGuard(OsrGuardType::kUninitialized);
-  Node* effect = checkpoint;
-  for (int i = 0; i < size; i++) {
-    values()->at(i) = effect =
-        graph()->NewNode(guard_op, values()->at(i), effect, entry);
-  }
-  Node* context = effect = graph()->NewNode(guard_op, Context(), effect, entry);
-  SetContext(context);
-  UpdateEffectDependency(effect);
 }
 
 bool BytecodeGraphBuilder::Environment::StateValuesRequireUpdate(
@@ -456,7 +438,7 @@ Node* BytecodeGraphBuilder::Environment::Checkpoint(
 BytecodeGraphBuilder::BytecodeGraphBuilder(
     Zone* local_zone, Handle<SharedFunctionInfo> shared_info,
     Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
-    JSGraph* jsgraph, float invocation_frequency,
+    JSGraph* jsgraph, CallFrequency invocation_frequency,
     SourcePositionTable* source_positions, int inlining_id,
     JSTypeHintLowering::Flags flags)
     : local_zone_(local_zone),
@@ -475,7 +457,6 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
       bytecode_analysis_(nullptr),
       environment_(nullptr),
       osr_ast_id_(osr_ast_id),
-      osr_loop_offset_(-1),
       merge_environments_(local_zone),
       exception_handlers_(local_zone),
       current_exception_handler_(0),
@@ -1391,7 +1372,7 @@ void BytecodeGraphBuilder::BuildCall(TailCallMode tail_call_mode,
   STATIC_ASSERT(FeedbackVector::kReservedIndexCount > 0);
   VectorSlotPair feedback = CreateVectorSlotPair(slot_id);
 
-  float const frequency = ComputeCallFrequency(slot_id);
+  CallFrequency frequency = ComputeCallFrequency(slot_id);
   const Operator* call = javascript()->Call(arg_count, frequency, feedback,
                                             receiver_mode, tail_call_mode);
   Node* value = ProcessCallArguments(call, args, static_cast<int>(arg_count));
@@ -1673,7 +1654,7 @@ void BytecodeGraphBuilder::VisitConstruct() {
   Node* new_target = environment()->LookupAccumulator();
   Node* callee = environment()->LookupRegister(callee_reg);
 
-  float const frequency = ComputeCallFrequency(slot_id);
+  CallFrequency frequency = ComputeCallFrequency(slot_id);
   const Operator* call = javascript()->Construct(
       static_cast<uint32_t>(reg_count + 2), frequency, feedback);
   Node* value =
@@ -1741,9 +1722,11 @@ CompareOperationHint BytecodeGraphBuilder::GetCompareOperationHint() {
   return nexus.GetCompareOperationFeedback();
 }
 
-float BytecodeGraphBuilder::ComputeCallFrequency(int slot_id) const {
+CallFrequency BytecodeGraphBuilder::ComputeCallFrequency(int slot_id) const {
+  if (invocation_frequency_.IsUnknown()) return CallFrequency();
   CallICNexus nexus(feedback_vector(), feedback_vector()->ToSlot(slot_id));
-  return nexus.ComputeCallFrequency() * invocation_frequency_;
+  return CallFrequency(nexus.ComputeCallFrequency() *
+                       invocation_frequency_.value());
 }
 
 void BytecodeGraphBuilder::VisitAdd() {
@@ -2380,7 +2363,7 @@ void BytecodeGraphBuilder::MergeControlToLeaveFunction(Node* exit) {
 void BytecodeGraphBuilder::BuildOSRLoopEntryPoint(int current_offset) {
   DCHECK(bytecode_analysis()->IsLoopHeader(current_offset));
 
-  if (!osr_ast_id_.IsNone() && osr_loop_offset_ == current_offset) {
+  if (bytecode_analysis()->IsOSREntryPoint(current_offset)) {
     // For OSR add a special {OsrLoopEntry} node into the current loop header.
     // It will be turned into a usable entry by the OSR deconstruction.
     Environment* osr_env = environment()->Copy();
@@ -2390,15 +2373,10 @@ void BytecodeGraphBuilder::BuildOSRLoopEntryPoint(int current_offset) {
 }
 
 void BytecodeGraphBuilder::BuildOSRNormalEntryPoint() {
-  if (!osr_ast_id_.IsNone()) {
+  if (bytecode_analysis()->HasOSREntryPoint()) {
     // For OSR add an {OsrNormalEntry} as the the top-level environment start.
     // It will be replaced with {Dead} by the OSR deconstruction.
     NewNode(common()->OsrNormalEntry());
-    // Translate the offset of the jump instruction to the jump target offset of
-    // that instruction so that the derived BailoutId points to the loop header.
-    osr_loop_offset_ =
-        bytecode_analysis()->GetLoopOffsetFor(osr_ast_id_.ToInt());
-    DCHECK(bytecode_analysis()->IsLoopHeader(osr_loop_offset_));
   }
 }
 
@@ -2545,7 +2523,7 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedLoadNamed(const Operator* op,
   // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
   // pruned from the graph by a soft-deopt. It can happen that a LoadIC that
   // control-dominates the OSR entry is still in "uninitialized" state.
-  if (!osr_ast_id_.IsNone()) return nullptr;
+  if (bytecode_analysis()->HasOSREntryPoint()) return nullptr;
   Node* effect = environment()->GetEffectDependency();
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceLoadNamedOperation(
@@ -2564,7 +2542,7 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedLoadKeyed(const Operator* op,
   // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
   // pruned from the graph by a soft-deopt. It can happen that a LoadIC that
   // control-dominates the OSR entry is still in "uninitialized" state.
-  if (!osr_ast_id_.IsNone()) return nullptr;
+  if (bytecode_analysis()->HasOSREntryPoint()) return nullptr;
   Node* effect = environment()->GetEffectDependency();
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceLoadKeyedOperation(
@@ -2583,7 +2561,7 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedStoreNamed(const Operator* op,
   // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
   // pruned from the graph by a soft-deopt. It can happen that a LoadIC that
   // control-dominates the OSR entry is still in "uninitialized" state.
-  if (!osr_ast_id_.IsNone()) return nullptr;
+  if (bytecode_analysis()->HasOSREntryPoint()) return nullptr;
   Node* effect = environment()->GetEffectDependency();
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceStoreNamedOperation(
@@ -2602,7 +2580,7 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedStoreKeyed(const Operator* op,
   // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
   // pruned from the graph by a soft-deopt. It can happen that a LoadIC that
   // control-dominates the OSR entry is still in "uninitialized" state.
-  if (!osr_ast_id_.IsNone()) return nullptr;
+  if (bytecode_analysis()->HasOSREntryPoint()) return nullptr;
   Node* effect = environment()->GetEffectDependency();
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceStoreKeyedOperation(

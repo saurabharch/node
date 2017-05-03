@@ -242,9 +242,8 @@ Reduction JSNativeContextSpecialization::ReduceJSInstanceOf(Node* node) {
     node->ReplaceInput(2, object);
     node->ReplaceInput(5, effect);
     NodeProperties::ChangeOp(
-        node,
-        javascript()->Call(3, 0.0f, VectorSlotPair(),
-                           ConvertReceiverMode::kNotNullOrUndefined));
+        node, javascript()->Call(3, CallFrequency(), VectorSlotPair(),
+                                 ConvertReceiverMode::kNotNullOrUndefined));
 
     // Rewire the value uses of {node} to ToBoolean conversion of the result.
     Node* value = graph()->NewNode(javascript()->ToBoolean(ToBooleanHint::kAny),
@@ -1503,7 +1502,7 @@ JSNativeContextSpecialization::BuildPropertyAccess(
         // Introduce the call to the getter function.
         if (access_info.constant()->IsJSFunction()) {
           value = effect = control = graph()->NewNode(
-              javascript()->Call(2, 0.0f, VectorSlotPair(),
+              javascript()->Call(2, CallFrequency(), VectorSlotPair(),
                                  ConvertReceiverMode::kNotNullOrUndefined),
               target, receiver, context, frame_state0, effect, control);
         } else {
@@ -1539,7 +1538,7 @@ JSNativeContextSpecialization::BuildPropertyAccess(
         // Introduce the call to the setter function.
         if (access_info.constant()->IsJSFunction()) {
           effect = control = graph()->NewNode(
-              javascript()->Call(3, 0.0f, VectorSlotPair(),
+              javascript()->Call(3, CallFrequency(), VectorSlotPair(),
                                  ConvertReceiverMode::kNotNullOrUndefined),
               target, receiver, value, context, frame_state0, effect, control);
         } else {
@@ -2215,7 +2214,7 @@ JSNativeContextSpecialization::InlineApiCall(
   int const argc = value == nullptr ? 0 : 1;
   // The stub always expects the receiver as the first param on the stack.
   CallApiCallbackStub stub(
-      isolate(), argc, call_data_object->IsUndefined(isolate()),
+      isolate(), argc,
       true /* FunctionTemplateInfo doesn't have an associated context. */);
   CallInterfaceDescriptor call_interface_descriptor =
       stub.GetCallInterfaceDescriptor();

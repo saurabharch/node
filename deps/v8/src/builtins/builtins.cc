@@ -10,6 +10,7 @@
 #include "src/isolate.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/visitors.h"
 
 namespace v8 {
 namespace internal {
@@ -27,8 +28,9 @@ Builtins::~Builtins() {}
 
 void Builtins::TearDown() { initialized_ = false; }
 
-void Builtins::IterateBuiltins(ObjectVisitor* v) {
-  v->VisitPointers(&builtins_[0], &builtins_[0] + builtin_count);
+void Builtins::IterateBuiltins(RootVisitor* v) {
+  v->VisitRootPointers(Root::kBuiltins, &builtins_[0],
+                       &builtins_[0] + builtin_count);
 }
 
 const char* Builtins::Lookup(byte* pc) {
@@ -114,6 +116,22 @@ Handle<Code> Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
 }
 
 // static
+int Builtins::GetBuiltinParameterCount(Name name) {
+  switch (name) {
+#define TFJ_CASE(Name, ParamCount, ...) \
+  case k##Name: {                       \
+    return ParamCount;                  \
+  }
+    BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, TFJ_CASE, IGNORE_BUILTIN,
+                 IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
+#undef TFJ_CASE
+    default:
+      UNREACHABLE();
+      return 0;
+  }
+}
+
+// static
 Callable Builtins::CallableFor(Isolate* isolate, Name name) {
   switch (name) {
 #define CASE(Name, ...)                                              \
@@ -125,14 +143,10 @@ Callable Builtins::CallableFor(Isolate* isolate, Name name) {
     BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, CASE, CASE,
                  CASE, IGNORE_BUILTIN, IGNORE_BUILTIN)
 #undef CASE
-#define CASE(Name, ...)                                \
-  case k##Name: {                                      \
-    Handle<Code> code = isolate->builtins()->Name();   \
-    return Callable(code, BuiltinDescriptor(isolate)); \
-  }
-    BUILTIN_LIST(CASE, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN,
-                 IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
-#undef CASE
+    case kConsoleAssert: {
+      Handle<Code> code = isolate->builtins()->ConsoleAssert();
+      return Callable(code, BuiltinDescriptor(isolate));
+    }
     default:
       UNREACHABLE();
       return Callable(Handle<Code>::null(), VoidDescriptor(isolate));

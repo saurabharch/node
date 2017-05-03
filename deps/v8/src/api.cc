@@ -874,7 +874,7 @@ void SetResourceConstraints(i::Isolate* isolate,
   if (semi_space_size != 0 || old_space_size != 0 ||
       max_executable_size != 0 || code_range_size != 0) {
     isolate->heap()->ConfigureHeap(semi_space_size, old_space_size,
-                                   max_executable_size, code_range_size);
+                                   code_range_size);
   }
   isolate->allocator()->ConfigureSegmentPool(max_pool_size);
 
@@ -2470,6 +2470,7 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
     source->parser->ReportErrors(isolate, script);
   }
   source->parser->UpdateStatistics(isolate, script);
+  source->info->UpdateStatisticsAfterBackgroundParse(isolate);
 
   i::DeferredHandleScope deferred_handle_scope(isolate);
   {
@@ -2708,6 +2709,10 @@ void v8::TryCatch::ResetInternal() {
 
 void v8::TryCatch::SetVerbose(bool value) {
   is_verbose_ = value;
+}
+
+bool v8::TryCatch::IsVerbose() const {
+  return is_verbose_;
 }
 
 
@@ -3214,11 +3219,6 @@ struct ValueSerializer::PrivateData {
   i::Isolate* isolate;
   i::ValueSerializer serializer;
 };
-
-// static
-uint32_t ValueSerializer::GetCurrentDataFormatVersion() {
-  return i::ValueSerializer::GetCurrentDataFormatVersion();
-}
 
 ValueSerializer::ValueSerializer(Isolate* isolate)
     : ValueSerializer(isolate, nullptr) {}
@@ -6331,11 +6331,11 @@ template <>
 struct InvokeBootstrapper<i::Context> {
   i::Handle<i::Context> Invoke(
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
-      v8::Local<v8::ObjectTemplate> global_object_template,
+      v8::Local<v8::ObjectTemplate> global_proxy_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
       v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     return isolate->bootstrapper()->CreateEnvironment(
-        maybe_global_proxy, global_object_template, extensions,
+        maybe_global_proxy, global_proxy_template, extensions,
         context_snapshot_index, embedder_fields_deserializer);
   }
 };
@@ -6344,13 +6344,13 @@ template <>
 struct InvokeBootstrapper<i::JSGlobalProxy> {
   i::Handle<i::JSGlobalProxy> Invoke(
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
-      v8::Local<v8::ObjectTemplate> global_object_template,
+      v8::Local<v8::ObjectTemplate> global_proxy_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
       v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     USE(extensions);
     USE(context_snapshot_index);
     return isolate->bootstrapper()->NewRemoteContext(maybe_global_proxy,
-                                                     global_object_template);
+                                                     global_proxy_template);
   }
 };
 
@@ -9287,6 +9287,11 @@ bool debug::Script::WasCompiled() const {
          i::Script::COMPILATION_STATE_COMPILED;
 }
 
+bool debug::Script::IsEmbedded() const {
+  i::Handle<i::Script> script = Utils::OpenHandle(this);
+  return script->context_data() == script->GetHeap()->uninitialized_symbol();
+}
+
 int debug::Script::Id() const { return Utils::OpenHandle(this)->id(); }
 
 int debug::Script::LineOffset() const {
@@ -9343,12 +9348,13 @@ MaybeLocal<String> debug::Script::SourceMappingURL() const {
       handle_scope.CloseAndEscape(i::Handle<i::String>::cast(value)));
 }
 
-MaybeLocal<Value> debug::Script::ContextData() const {
+Maybe<int> debug::Script::ContextId() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   i::HandleScope handle_scope(isolate);
   i::Handle<i::Script> script = Utils::OpenHandle(this);
-  i::Handle<i::Object> value(script->context_data(), isolate);
-  return Utils::ToLocal(handle_scope.CloseAndEscape(value));
+  i::Object* value = script->context_data();
+  if (value->IsSmi()) return Just(i::Smi::cast(value)->value());
+  return Nothing<int>();
 }
 
 MaybeLocal<String> debug::Script::Source() const {
@@ -10326,8 +10332,7 @@ char* HandleScopeImplementer::RestoreThread(char* storage) {
   return storage + ArchiveSpacePerThread();
 }
 
-
-void HandleScopeImplementer::IterateThis(ObjectVisitor* v) {
+void HandleScopeImplementer::IterateThis(RootVisitor* v) {
 #ifdef DEBUG
   bool found_block_before_deferred = false;
 #endif
@@ -10337,13 +10342,14 @@ void HandleScopeImplementer::IterateThis(ObjectVisitor* v) {
     if (last_handle_before_deferred_block_ != NULL &&
         (last_handle_before_deferred_block_ <= &block[kHandleBlockSize]) &&
         (last_handle_before_deferred_block_ >= block)) {
-      v->VisitPointers(block, last_handle_before_deferred_block_);
+      v->VisitRootPointers(Root::kHandleScope, block,
+                           last_handle_before_deferred_block_);
       DCHECK(!found_block_before_deferred);
 #ifdef DEBUG
       found_block_before_deferred = true;
 #endif
     } else {
-      v->VisitPointers(block, &block[kHandleBlockSize]);
+      v->VisitRootPointers(Root::kHandleScope, block, &block[kHandleBlockSize]);
     }
   }
 
@@ -10352,30 +10358,30 @@ void HandleScopeImplementer::IterateThis(ObjectVisitor* v) {
 
   // Iterate over live handles in the last block (if any).
   if (!blocks()->is_empty()) {
-    v->VisitPointers(blocks()->last(), handle_scope_data_.next);
+    v->VisitRootPointers(Root::kHandleScope, blocks()->last(),
+                         handle_scope_data_.next);
   }
 
   List<Context*>* context_lists[2] = { &saved_contexts_, &entered_contexts_};
   for (unsigned i = 0; i < arraysize(context_lists); i++) {
     if (context_lists[i]->is_empty()) continue;
     Object** start = reinterpret_cast<Object**>(&context_lists[i]->first());
-    v->VisitPointers(start, start + context_lists[i]->length());
+    v->VisitRootPointers(Root::kHandleScope, start,
+                         start + context_lists[i]->length());
   }
   if (microtask_context_) {
-    Object** start = reinterpret_cast<Object**>(&microtask_context_);
-    v->VisitPointers(start, start + 1);
+    v->VisitRootPointer(Root::kHandleScope,
+                        reinterpret_cast<Object**>(&microtask_context_));
   }
 }
 
-
-void HandleScopeImplementer::Iterate(ObjectVisitor* v) {
+void HandleScopeImplementer::Iterate(RootVisitor* v) {
   HandleScopeData* current = isolate_->handle_scope_data();
   handle_scope_data_ = *current;
   IterateThis(v);
 }
 
-
-char* HandleScopeImplementer::Iterate(ObjectVisitor* v, char* storage) {
+char* HandleScopeImplementer::Iterate(RootVisitor* v, char* storage) {
   HandleScopeImplementer* scope_implementer =
       reinterpret_cast<HandleScopeImplementer*>(storage);
   scope_implementer->IterateThis(v);
@@ -10428,17 +10434,17 @@ DeferredHandles::~DeferredHandles() {
   }
 }
 
-
-void DeferredHandles::Iterate(ObjectVisitor* v) {
+void DeferredHandles::Iterate(RootVisitor* v) {
   DCHECK(!blocks_.is_empty());
 
   DCHECK((first_block_limit_ >= blocks_.first()) &&
          (first_block_limit_ <= &(blocks_.first())[kHandleBlockSize]));
 
-  v->VisitPointers(blocks_.first(), first_block_limit_);
+  v->VisitRootPointers(Root::kHandleScope, blocks_.first(), first_block_limit_);
 
   for (int i = 1; i < blocks_.length(); i++) {
-    v->VisitPointers(blocks_[i], &blocks_[i][kHandleBlockSize]);
+    v->VisitRootPointers(Root::kHandleScope, blocks_[i],
+                         &blocks_[i][kHandleBlockSize]);
   }
 }
 

@@ -78,6 +78,7 @@ class Logger;
 class MaterializedObjectStore;
 class OptimizingCompileDispatcher;
 class RegExpStack;
+class RootVisitor;
 class RuntimeProfiler;
 class SaveContext;
 class SetupIsolateDelegate;
@@ -671,7 +672,7 @@ class Isolate {
   // exceptions.  If an exception was thrown and not handled by an external
   // handler the exception is scheduled to be rethrown when we return to running
   // JavaScript code.  If an exception is scheduled true is returned.
-  bool OptionalRescheduleException(bool is_bottom_call);
+  V8_EXPORT_PRIVATE bool OptionalRescheduleException(bool is_bottom_call);
 
   // Push and pop a promise and the current try-catch handler.
   void PushPromise(Handle<JSObject> promise);
@@ -815,9 +816,9 @@ class Isolate {
   void InvokeApiInterruptCallbacks();
 
   // Administration
-  void Iterate(ObjectVisitor* v);
-  void Iterate(ObjectVisitor* v, ThreadLocalTop* t);
-  char* Iterate(ObjectVisitor* v, char* t);
+  void Iterate(RootVisitor* v);
+  void Iterate(RootVisitor* v, ThreadLocalTop* t);
+  char* Iterate(RootVisitor* v, char* t);
   void IterateThread(ThreadVisitor* v, char* t);
 
   // Returns the current native context.
@@ -1077,7 +1078,7 @@ class Isolate {
 
   AccessCompilerData* access_compiler_data() { return access_compiler_data_; }
 
-  void IterateDeferredHandles(ObjectVisitor* visitor);
+  void IterateDeferredHandles(RootVisitor* visitor);
   void LinkDeferredHandles(DeferredHandles* deferred_handles);
   void UnlinkDeferredHandles(DeferredHandles* deferred_handles);
 
@@ -1249,6 +1250,9 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex* simulator_i_cache_mutex() { return &simulator_i_cache_mutex_; }
+  base::Mutex* simulator_redirection_mutex() {
+    return &simulator_redirection_mutex_;
+  }
 #endif
 
   void set_allow_atomics_wait(bool set) { allow_atomics_wait_ = set; }
@@ -1569,6 +1573,7 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex simulator_i_cache_mutex_;
+  base::Mutex simulator_redirection_mutex_;
 #endif
 
   bool allow_atomics_wait_;

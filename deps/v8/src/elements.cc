@@ -3131,7 +3131,7 @@ class TypedElementsAccessor
     Handle<BackingStore> destination_elements(
         BackingStore::cast(destination->elements()));
 
-    DCHECK_EQ(source->length(), destination->length());
+    DCHECK_GE(destination->length(), source->length());
     DCHECK(source->length()->IsSmi());
     DCHECK_EQ(Smi::FromInt(static_cast<int>(length)), source->length());
 
@@ -3140,25 +3140,27 @@ class TypedElementsAccessor
         destination_elements->map()->instance_type();
 
     bool same_type = source_type == destination_type;
-    bool same_size = FixedTypedArrayBase::ElementSize(source_type) ==
-                     FixedTypedArrayBase::ElementSize(destination_type);
+    bool same_size = source->element_size() == destination->element_size();
     bool both_are_simple = HasSimpleRepresentation(source_type) &&
                            HasSimpleRepresentation(destination_type);
+
+    // We assume the source and destination don't overlap, even though they
+    // can share the same buffer. This is always true for newly allocated
+    // TypedArrays.
+    uint8_t* source_data = static_cast<uint8_t*>(source_elements->DataPtr());
+    uint8_t* dest_data = static_cast<uint8_t*>(destination_elements->DataPtr());
+    size_t source_byte_length = NumberToSize(source->byte_offset());
+    size_t dest_byte_length = NumberToSize(destination->byte_offset());
+    CHECK(dest_data + dest_byte_length <= source_data ||
+          source_data + source_byte_length <= dest_data);
 
     // We can simply copy the backing store if the types are the same, or if
     // we are converting e.g. Uint8 <-> Int8, as the binary representation
     // will be the same. This is not the case for floats or clamped Uint8,
     // which have special conversion operations.
     if (same_type || (same_size && both_are_simple)) {
-      // We assume the source and destination don't overlap. This is always true
-      // for newly allocated TypedArrays.
-      CHECK_NE(source->buffer(), destination->buffer());
-      int element_size = FixedTypedArrayBase::ElementSize(source_type);
-
-      uint8_t* source_data = static_cast<uint8_t*>(source_elements->DataPtr());
-      uint8_t* destination_data =
-          static_cast<uint8_t*>(destination_elements->DataPtr());
-      std::memcpy(destination_data, source_data, length * element_size);
+      size_t element_size = source->element_size();
+      std::memcpy(dest_data, source_data, length * element_size);
     } else {
       // We use scalar accessors below to avoid boxing/unboxing, so there are
       // no allocations.
@@ -3177,15 +3179,41 @@ class TypedElementsAccessor
     }
   }
 
+  static bool HoleyPrototypeLookupRequired(Isolate* isolate,
+                                           Handle<JSArray> source) {
+    Object* source_proto = source->map()->prototype();
+    // Null prototypes are OK - we don't need to do prototype chain lookups on
+    // them.
+    if (source_proto->IsNull(isolate)) return false;
+    if (source_proto->IsJSProxy()) return true;
+    DCHECK(source_proto->IsJSObject());
+    if (!isolate->is_initial_array_prototype(JSObject::cast(source_proto))) {
+      return true;
+    }
+    return !isolate->IsFastArrayConstructorPrototypeChainIntact();
+  }
+
   static bool TryCopyElementsHandleFastNumber(Handle<JSArray> source,
                                               Handle<JSTypedArray> destination,
                                               size_t length) {
+    Isolate* isolate = source->GetIsolate();
     DisallowHeapAllocation no_gc;
+    DisallowJavascriptExecution no_js(isolate);
+
     ElementsKind kind = source->GetElementsKind();
     BackingStore* dest = BackingStore::cast(destination->elements());
 
+    // When we find the hole, we normally have to look up the element on the
+    // prototype chain, which is not handled here and we return false instead.
+    // When the array has the original array prototype, and that prototype has
+    // not been changed in a way that would affect lookups, we can just convert
+    // the hole into undefined.
+    if (HoleyPrototypeLookupRequired(isolate, source)) return false;
+
+    Object* undefined = isolate->heap()->undefined_value();
+
+    // Fastpath for packed Smi kind.
     if (kind == FAST_SMI_ELEMENTS) {
-      // Fastpath for packed Smi kind.
       FixedArray* source_store = FixedArray::cast(source->elements());
 
       for (uint32_t i = 0; i < length; i++) {
@@ -3193,6 +3221,19 @@ class TypedElementsAccessor
         DCHECK(elem->IsSmi());
         int int_value = Smi::cast(elem)->value();
         dest->set(i, dest->from(int_value));
+      }
+      return true;
+    } else if (kind == FAST_HOLEY_SMI_ELEMENTS) {
+      FixedArray* source_store = FixedArray::cast(source->elements());
+      for (uint32_t i = 0; i < length; i++) {
+        if (source_store->is_the_hole(isolate, i)) {
+          dest->SetValue(i, undefined);
+        } else {
+          Object* elem = source_store->get(i);
+          DCHECK(elem->IsSmi());
+          int int_value = Smi::cast(elem)->value();
+          dest->set(i, dest->from(int_value));
+        }
       }
       return true;
     } else if (kind == FAST_DOUBLE_ELEMENTS) {
@@ -3206,6 +3247,18 @@ class TypedElementsAccessor
         // rather than relying on C++ to convert elem.
         double elem = source_store->get_scalar(i);
         dest->set(i, dest->from(elem));
+      }
+      return true;
+    } else if (kind == FAST_HOLEY_DOUBLE_ELEMENTS) {
+      FixedDoubleArray* source_store =
+          FixedDoubleArray::cast(source->elements());
+      for (uint32_t i = 0; i < length; i++) {
+        if (source_store->is_the_hole(i)) {
+          dest->SetValue(i, undefined);
+        } else {
+          double elem = source_store->get_scalar(i);
+          dest->set(i, dest->from(elem));
+        }
       }
       return true;
     }
@@ -3233,6 +3286,9 @@ class TypedElementsAccessor
     return Smi::kZero;
   }
 
+  // This doesn't guarantee that the destination array will be completely
+  // filled. The caller must do this by passing a source with equal length, if
+  // that is required.
   static Object* CopyElementsHandleImpl(Handle<JSReceiver> source,
                                         Handle<JSObject> destination,
                                         size_t length) {

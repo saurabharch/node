@@ -108,10 +108,10 @@ Handle<FieldType> Object::OptimalType(Isolate* isolate,
   return FieldType::Any(isolate);
 }
 
-
 MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
                                          Handle<Object> object,
-                                         Handle<Context> native_context) {
+                                         Handle<Context> native_context,
+                                         const char* method_name) {
   if (object->IsJSReceiver()) return Handle<JSReceiver>::cast(object);
   Handle<JSFunction> constructor;
   if (object->IsSmi()) {
@@ -120,6 +120,14 @@ MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
     int constructor_function_index =
         Handle<HeapObject>::cast(object)->map()->GetConstructorFunctionIndex();
     if (constructor_function_index == Map::kNoConstructorFunctionIndex) {
+      if (method_name != nullptr) {
+        THROW_NEW_ERROR(
+            isolate,
+            NewTypeError(
+                MessageTemplate::kCalledOnNullOrUndefined,
+                isolate->factory()->NewStringFromAsciiChecked(method_name)),
+            JSReceiver);
+      }
       THROW_NEW_ERROR(isolate,
                       NewTypeError(MessageTemplate::kUndefinedOrNullToObject),
                       JSReceiver);
@@ -8699,9 +8707,8 @@ Handle<Map> Map::TransitionToImmutableProto(Handle<Map> map) {
   return new_map;
 }
 
-Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
-                                int in_object_properties,
-                                int unused_property_fields) {
+namespace {
+void EnsureInitialMap(Handle<Map> map) {
 #ifdef DEBUG
   Isolate* isolate = map->GetIsolate();
   // Strict function maps have Function as a constructor but the
@@ -8719,7 +8726,21 @@ Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
   DCHECK(map->owns_descriptors());
   DCHECK_EQ(map->NumberOfOwnDescriptors(),
             map->instance_descriptors()->number_of_descriptors());
+}
+}  // namespace
 
+// static
+Handle<Map> Map::CopyInitialMapNormalized(Handle<Map> map,
+                                          PropertyNormalizationMode mode) {
+  EnsureInitialMap(map);
+  return CopyNormalized(map, mode);
+}
+
+// static
+Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
+                                int in_object_properties,
+                                int unused_property_fields) {
+  EnsureInitialMap(map);
   Handle<Map> result = RawCopy(map, instance_size);
 
   // Please note instance_type and instance_size are set when allocated.
@@ -10154,11 +10175,13 @@ Handle<DescriptorArray> DescriptorArray::Allocate(Isolate* isolate,
       factory->NewFixedArray(LengthFor(size), pretenure);
 
   result->set(kDescriptorLengthIndex, Smi::FromInt(number_of_descriptors));
-  result->set(kEnumCacheIndex, Smi::kZero);
+  result->set(kEnumCacheBridgeIndex, Smi::kZero);
   return Handle<DescriptorArray>::cast(result);
 }
 
-void DescriptorArray::ClearEnumCache() { set(kEnumCacheIndex, Smi::kZero); }
+void DescriptorArray::ClearEnumCache() {
+  set(kEnumCacheBridgeIndex, Smi::kZero);
+}
 
 void DescriptorArray::Replace(int index, Descriptor* descriptor) {
   descriptor->SetSortedKeyIndex(GetSortedKeyIndex(index));
@@ -10178,14 +10201,14 @@ void DescriptorArray::SetEnumCache(Handle<DescriptorArray> descriptors,
     bridge_storage = *isolate->factory()->NewFixedArray(
         DescriptorArray::kEnumCacheBridgeLength);
   } else {
-    bridge_storage = FixedArray::cast(descriptors->get(kEnumCacheIndex));
+    bridge_storage = FixedArray::cast(descriptors->get(kEnumCacheBridgeIndex));
   }
   bridge_storage->set(kEnumCacheBridgeCacheIndex, *new_cache);
   bridge_storage->set(
       kEnumCacheBridgeIndicesCacheIndex,
       new_index_cache.is_null() ? Object::cast(Smi::kZero) : *new_index_cache);
   if (needs_new_enum_cache) {
-    descriptors->set(kEnumCacheIndex, bridge_storage);
+    descriptors->set(kEnumCacheBridgeIndex, bridge_storage);
   }
 }
 
@@ -10665,20 +10688,17 @@ char* Relocatable::RestoreState(Isolate* isolate, char* from) {
   return from + ArchiveSpacePerThread();
 }
 
-
-char* Relocatable::Iterate(ObjectVisitor* v, char* thread_storage) {
+char* Relocatable::Iterate(RootVisitor* v, char* thread_storage) {
   Relocatable* top = *reinterpret_cast<Relocatable**>(thread_storage);
   Iterate(v, top);
   return thread_storage + ArchiveSpacePerThread();
 }
 
-
-void Relocatable::Iterate(Isolate* isolate, ObjectVisitor* v) {
+void Relocatable::Iterate(Isolate* isolate, RootVisitor* v) {
   Iterate(v, isolate->relocatable_top());
 }
 
-
-void Relocatable::Iterate(ObjectVisitor* v, Relocatable* top) {
+void Relocatable::Iterate(RootVisitor* v, Relocatable* top) {
   Relocatable* current = top;
   while (current != NULL) {
     current->IterateInstance(v);
@@ -12716,10 +12736,7 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
         isolate);
   } else {
     construct_prototype = Handle<JSReceiver>::cast(value);
-    if (function->map()->has_non_instance_prototype()) {
-      function->map()->set_non_instance_prototype(false);
-      function->map()->SetConstructor(isolate->heap()->null_value());
-    }
+    function->map()->set_non_instance_prototype(false);
   }
 
   SetInstancePrototype(isolate, function, construct_prototype);
@@ -13402,11 +13419,6 @@ bool Script::HasPreparsedScopeData() const {
   return preparsed_scope_data()->length() > 0;
 }
 
-Handle<FixedUint32Array> Script::GetPreparsedScopeData() const {
-  return Handle<FixedUint32Array>::cast(
-      Handle<FixedTypedArrayBase>(preparsed_scope_data()));
-}
-
 SharedFunctionInfo::ScriptIterator::ScriptIterator(Handle<Script> script)
     : ScriptIterator(script->GetIsolate(),
                      handle(script->shared_function_infos())) {}
@@ -13889,85 +13901,55 @@ Code* SharedFunctionInfo::SearchOptimizedCodeMap(Context* native_context,
   return result;
 }
 
-
-#define DECLARE_TAG(ignore1, name, ignore2) name,
-const char* const VisitorSynchronization::kTags[
-    VisitorSynchronization::kNumberOfSyncTags] = {
-  VISITOR_SYNCHRONIZATION_TAGS_LIST(DECLARE_TAG)
-};
-#undef DECLARE_TAG
-
-
-#define DECLARE_TAG(ignore1, ignore2, name) name,
-const char* const VisitorSynchronization::kTagNames[
-    VisitorSynchronization::kNumberOfSyncTags] = {
-  VISITOR_SYNCHRONIZATION_TAGS_LIST(DECLARE_TAG)
-};
-#undef DECLARE_TAG
-
-
-void ObjectVisitor::VisitCodeTarget(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCodeTarget(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsCodeTarget(rinfo->rmode()));
   Object* old_pointer = Code::GetCodeFromTargetAddress(rinfo->target_address());
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitCodeAgeSequence(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCodeAgeSequence(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsCodeAgeSequence(rinfo->rmode()));
   Object* old_pointer = rinfo->code_age_stub();
   Object* new_pointer = old_pointer;
   if (old_pointer != nullptr) {
-    VisitPointer(&new_pointer);
+    VisitPointer(host, &new_pointer);
     DCHECK_EQ(old_pointer, new_pointer);
   }
 }
 
-
-void ObjectVisitor::VisitCodeEntry(Address entry_address) {
+void ObjectVisitor::VisitCodeEntry(JSFunction* host, Address entry_address) {
   Object* old_pointer = Code::GetObjectFromEntryAddress(entry_address);
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitCell(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCellPointer(Code* host, RelocInfo* rinfo) {
   DCHECK(rinfo->rmode() == RelocInfo::CELL);
   Object* old_pointer = rinfo->target_cell();
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitDebugTarget(RelocInfo* rinfo) {
+void ObjectVisitor::VisitDebugTarget(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsDebugBreakSlot(rinfo->rmode()) &&
          rinfo->IsPatchedDebugBreakSlotSequence());
   Object* old_pointer =
       Code::GetCodeFromTargetAddress(rinfo->debug_call_address());
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitEmbeddedPointer(RelocInfo* rinfo) {
+void ObjectVisitor::VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) {
   DCHECK(rinfo->rmode() == RelocInfo::EMBEDDED_OBJECT);
   Object* old_pointer = rinfo->target_object();
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
-}
-
-
-void ObjectVisitor::VisitExternalReference(RelocInfo* rinfo) {
-  Address old_reference = rinfo->target_external_reference();
-  Address new_reference = old_reference;
-  VisitExternalReference(&new_reference);
-  DCHECK_EQ(old_reference, new_reference);
 }
 
 
@@ -14026,7 +14008,6 @@ void Code::CopyFrom(const CodeDesc& desc) {
             static_cast<size_t>(desc.reloc_size));
 
   // unbox handles and relocate
-  intptr_t delta = instruction_start() - desc.buffer;
   int mode_mask = RelocInfo::kCodeTargetMask |
                   RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
                   RelocInfo::ModeMask(RelocInfo::CELL) |
@@ -14046,8 +14027,8 @@ void Code::CopyFrom(const CodeDesc& desc) {
       it.rinfo()->set_target_cell(*cell, UPDATE_WRITE_BARRIER,
                                   SKIP_ICACHE_FLUSH);
     } else if (RelocInfo::IsCodeTarget(mode)) {
-      // rewrite code handles in inline cache targets to direct
-      // pointers to the first instruction in the code object
+      // rewrite code handles to direct pointers to the first instruction in the
+      // code object
       Handle<Object> p = it.rinfo()->target_object_handle(origin);
       Code* code = Code::cast(*p);
       it.rinfo()->set_target_address(GetIsolate(), code->instruction_start(),
@@ -14061,6 +14042,7 @@ void Code::CopyFrom(const CodeDesc& desc) {
       Code* code = Code::cast(*p);
       it.rinfo()->set_code_age_stub(code, SKIP_ICACHE_FLUSH);
     } else {
+      intptr_t delta = instruction_start() - desc.buffer;
       it.rinfo()->apply(delta);
     }
   }
@@ -16232,7 +16214,7 @@ JSRegExp::Flags RegExpFlagsFromString(Handle<String> flags, bool* success) {
   JSRegExp::Flags value = JSRegExp::kNone;
   int length = flags->length();
   // A longer flags string cannot be valid.
-  if (length > 5) return JSRegExp::Flags(0);
+  if (length > JSRegExp::FlagCount()) return JSRegExp::Flags(0);
   for (int i = 0; i < length; i++) {
     JSRegExp::Flag flag = JSRegExp::kNone;
     switch (flags->Get(i)) {
@@ -16836,9 +16818,11 @@ template class Dictionary<NameDictionary, NameDictionaryShape, Handle<Name> >;
 template class Dictionary<GlobalDictionary, GlobalDictionaryShape,
                           Handle<Name> >;
 
-template class Dictionary<SeededNumberDictionary,
-                          SeededNumberDictionaryShape,
-                          uint32_t>;
+template class EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
+    HashTable<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
+
+template class EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
+    Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
 
 template class Dictionary<UnseededNumberDictionary,
                           UnseededNumberDictionaryShape,
@@ -16916,10 +16900,6 @@ template Handle<NameDictionary>
 HashTable<NameDictionary, NameDictionaryShape, Handle<Name> >::
     Shrink(Handle<NameDictionary>, Handle<Name>);
 
-template Handle<SeededNumberDictionary>
-HashTable<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>::
-    Shrink(Handle<SeededNumberDictionary>, uint32_t);
-
 template Handle<UnseededNumberDictionary>
     HashTable<UnseededNumberDictionary, UnseededNumberDictionaryShape,
               uint32_t>::Shrink(Handle<UnseededNumberDictionary>, uint32_t);
@@ -16958,9 +16938,6 @@ template void Dictionary<NameDictionary, NameDictionaryShape,
 template Handle<NameDictionary>
 Dictionary<NameDictionary, NameDictionaryShape, Handle<Name> >::
     EnsureCapacity(Handle<NameDictionary>, int, Handle<Name>);
-
-template int HashTable<SeededNumberDictionary, SeededNumberDictionaryShape,
-                       uint32_t>::FindEntry(uint32_t);
 
 template int NameDictionaryBase<NameDictionary, NameDictionaryShape>::FindEntry(
     Handle<Name>);
@@ -17008,6 +16985,16 @@ Dictionary<NameDictionary, NameDictionaryShape, Handle<Name>>::CollectKeysTo(
     Handle<Dictionary<NameDictionary, NameDictionaryShape, Handle<Name>>>
         dictionary,
     KeyAccumulator* keys);
+
+template int
+Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,
+           uint32_t>::AddEntry(Handle<SeededNumberDictionary> dictionary,
+                               uint32_t key, Handle<Object> value,
+                               PropertyDetails details, uint32_t hash);
+
+template int
+Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,
+           uint32_t>::NumberOfElementsFilterAttributes(PropertyFilter filter);
 
 Handle<Object> JSObject::PrepareSlowElementsForSort(
     Handle<JSObject> object, uint32_t limit) {

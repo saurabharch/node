@@ -1127,7 +1127,8 @@ Handle<Script> Factory::NewScript(Handle<String> source) {
   script->set_eval_from_position(0);
   script->set_shared_function_infos(*empty_fixed_array(), SKIP_WRITE_BARRIER);
   script->set_flags(0);
-  script->set_preparsed_scope_data(heap->empty_fixed_uint32_array());
+  script->set_preparsed_scope_data(
+      PodArray<uint32_t>::cast(heap->empty_byte_array()));
 
   heap->set_script_list(*WeakFixedArray::Add(script_list(), script));
   return script;
@@ -1862,6 +1863,15 @@ Handle<JSObject> Factory::NewJSObjectFromMap(
       JSObject);
 }
 
+Handle<JSObject> Factory::NewSlowJSObjectFromMap(Handle<Map> map, int capacity,
+                                                 PretenureFlag pretenure) {
+  DCHECK(map->is_dictionary_map());
+  Handle<FixedArray> object_properties =
+      NameDictionary::New(isolate(), capacity);
+  Handle<JSObject> js_object = NewJSObjectFromMap(map, pretenure);
+  js_object->set_properties(*object_properties);
+  return js_object;
+}
 
 Handle<JSArray> Factory::NewJSArray(ElementsKind elements_kind,
                                     PretenureFlag pretenure) {
@@ -2662,32 +2672,31 @@ Handle<JSWeakMap> Factory::NewJSWeakMap() {
   return Handle<JSWeakMap>::cast(NewJSObjectFromMap(map));
 }
 
-
-Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<Context> context,
-                                               int number_of_properties,
-                                               bool* is_result_from_cache) {
+Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<Context> native_context,
+                                               int number_of_properties) {
+  DCHECK(native_context->IsNativeContext());
   const int kMapCacheSize = 128;
-
   // We do not cache maps for too many properties or when running builtin code.
-  if (number_of_properties > kMapCacheSize ||
-      isolate()->bootstrapper()->IsActive()) {
-    *is_result_from_cache = false;
-    Handle<Map> map = Map::Create(isolate(), number_of_properties);
-    return map;
+  if (isolate()->bootstrapper()->IsActive()) {
+    return Map::Create(isolate(), number_of_properties);
   }
-  *is_result_from_cache = true;
+  // Use initial slow object proto map for too many properties.
+  if (number_of_properties > kMapCacheSize) {
+    return handle(native_context->slow_object_with_object_prototype_map(),
+                  isolate());
+  }
   if (number_of_properties == 0) {
     // Reuse the initial map of the Object function if the literal has no
     // predeclared properties.
-    return handle(context->object_function()->initial_map(), isolate());
+    return handle(native_context->object_function()->initial_map(), isolate());
   }
 
   int cache_index = number_of_properties - 1;
-  Handle<Object> maybe_cache(context->map_cache(), isolate());
+  Handle<Object> maybe_cache(native_context->map_cache(), isolate());
   if (maybe_cache->IsUndefined(isolate())) {
     // Allocate the new map cache for the native context.
     maybe_cache = NewFixedArray(kMapCacheSize, TENURED);
-    context->set_map_cache(*maybe_cache);
+    native_context->set_map_cache(*maybe_cache);
   } else {
     // Check to see whether there is a matching element in the cache.
     Handle<FixedArray> cache = Handle<FixedArray>::cast(maybe_cache);
@@ -2695,13 +2704,16 @@ Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<Context> context,
     if (result->IsWeakCell()) {
       WeakCell* cell = WeakCell::cast(result);
       if (!cell->cleared()) {
-        return handle(Map::cast(cell->value()), isolate());
+        Map* map = Map::cast(cell->value());
+        DCHECK(!map->is_dictionary_map());
+        return handle(map, isolate());
       }
     }
   }
   // Create a new map and add it to the cache.
   Handle<FixedArray> cache = Handle<FixedArray>::cast(maybe_cache);
   Handle<Map> map = Map::Create(isolate(), number_of_properties);
+  DCHECK(!map->is_dictionary_map());
   Handle<WeakCell> cell = NewWeakCell(map);
   cache->set(cache_index, *cell);
   return map;
