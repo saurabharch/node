@@ -348,6 +348,7 @@ void Scope::SetDefaults() {
 
   inner_scope_calls_eval_ = false;
   force_context_allocation_ = false;
+  force_context_allocation_for_parameters_ = false;
 
   is_declaration_scope_ = false;
 
@@ -1408,19 +1409,6 @@ int Scope::ContextChainLengthUntilOutermostSloppyEval() const {
   return result;
 }
 
-int Scope::MaxNestedContextChainLength() {
-  int max_context_chain_length = 0;
-  for (Scope* scope = inner_scope_; scope != nullptr; scope = scope->sibling_) {
-    if (scope->is_function_scope()) continue;
-    max_context_chain_length = std::max(scope->MaxNestedContextChainLength(),
-                                        max_context_chain_length);
-  }
-  if (NeedsContext()) {
-    max_context_chain_length += 1;
-  }
-  return max_context_chain_length;
-}
-
 DeclarationScope* Scope::GetDeclarationScope() {
   Scope* scope = this;
   while (!scope->is_declaration_scope()) {
@@ -1592,7 +1580,6 @@ const char* Header(ScopeType scope_type, FunctionKind function_kind,
     case WITH_SCOPE: return "with";
   }
   UNREACHABLE();
-  return NULL;
 }
 
 void Indent(int n, const char* str) { PrintF("%*s%s", n, "", str); }
@@ -2194,7 +2181,8 @@ void DeclarationScope::AllocateParameterLocals() {
 
 void DeclarationScope::AllocateParameter(Variable* var, int index) {
   if (MustAllocate(var)) {
-    if (MustAllocateInContext(var)) {
+    if (has_forced_context_allocation_for_parameters() ||
+        MustAllocateInContext(var)) {
       DCHECK(var->IsUnallocated() || var->IsContextSlot());
       if (var->IsUnallocated()) {
         AllocateHeapSlot(var);

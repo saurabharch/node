@@ -323,6 +323,13 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   bool has_forced_context_allocation() const {
     return force_context_allocation_;
   }
+  void ForceContextAllocationForParameters() {
+    DCHECK(!already_resolved_);
+    force_context_allocation_for_parameters_ = true;
+  }
+  bool has_forced_context_allocation_for_parameters() const {
+    return force_context_allocation_for_parameters_;
+  }
 
   // ---------------------------------------------------------------------------
   // Predicates.
@@ -399,10 +406,6 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   // The number of contexts between this and the outermost context that has a
   // sloppy eval call. One if this->calls_sloppy_eval().
   int ContextChainLengthUntilOutermostSloppyEval() const;
-
-  // The maximum number of nested contexts required for this scope and any inner
-  // scopes.
-  int MaxNestedContextChainLength();
 
   // Find the first function, script, eval or (declaration) block scope. This is
   // the scope where var declarations will be hoisted to in the implementation.
@@ -574,6 +577,7 @@ class V8_EXPORT_PRIVATE Scope : public NON_EXPORTED_BASE(ZoneObject) {
   // True if one of the inner scopes or the scope itself calls eval.
   bool inner_scope_calls_eval_ : 1;
   bool force_context_allocation_ : 1;
+  bool force_context_allocation_for_parameters_ : 1;
 
   // True if it holds 'var' declarations.
   bool is_declaration_scope_ : 1;
