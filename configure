@@ -38,6 +38,9 @@ import string
 # If not run from node/, cd to node/.
 os.chdir(os.path.dirname(__file__) or '.')
 
+# Delete 'out' directory for a clean build.
+shutil.rmtree('out', ignore_errors=True)
+
 # gcc and g++ as defaults matches what GYP's Makefile generator does,
 # except on OS X.
 CC = os.environ.get('CC', 'cc' if sys.platform == 'darwin' else 'gcc')
